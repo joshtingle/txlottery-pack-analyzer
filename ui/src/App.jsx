@@ -60,8 +60,8 @@ function Bar({v=0,color,h=5}){
 function Tag({label,color,bg}){
   return <span style={{fontSize:".6rem",fontWeight:600,padding:"2px 8px",borderRadius:4,color,background:bg,whiteSpace:"nowrap"}}>{label}</span>;
 }
-function ScoreRing({score}){
-  const max=DB.score_max||0.42;
+function ScoreRing({score,scoreMax}){
+  const max=scoreMax||0.42;
   const p=Math.min(1,Math.max(0,(score||0)/max));
   const r=20,circ=2*Math.PI*r,dash=circ*p;
   const color=p>=0.7?C.green:p>=0.4?C.amber:C.red;
@@ -139,7 +139,7 @@ function ConcPanel({title,launchP,currP,ratio,printed,remaining,note,asOdds}){
 }
 
 // ── GameCard ──────────────────────────────────────────────────────────────────
-function GameCard({g,rank,onClick}){
+function GameCard({g,rank,onClick,scoreMax}){
   const v=vm(g.verdict);
   const actionable=["elite","strong_buy","consider"].includes(g.verdict);
   const rc=g.roi_on_max_loss!=null?roiColor(g.roi_on_max_loss):C.dim;
@@ -158,7 +158,7 @@ function GameCard({g,rank,onClick}){
           <Tag label={v.label} color={v.color} bg={v.bg}/>
           {rank<=10&&actionable&&<span style={{fontSize:".6rem",color:C.dim}}>#{rank}</span>}
         </div>
-        {actionable&&g.adj_prof_score!=null&&<ScoreRing score={g.adj_prof_score}/>}
+        {actionable&&g.adj_prof_score!=null&&<ScoreRing score={g.adj_prof_score} scoreMax={scoreMax}/>}
       </div>
 
       <div style={{fontSize:"1rem",fontWeight:600,color:C.text,marginBottom:3}}>{g.game_name}</div>
@@ -263,7 +263,7 @@ function GameCard({g,rank,onClick}){
 }
 
 // ── Detail view ───────────────────────────────────────────────────────────────
-function Detail({g,onClose}){
+function Detail({g,onClose,scoreMax}){
   const v=vm(g.verdict);
   const rc=roiColor(g.roi_on_max_loss||0);
   const cc=concColor(g.composite_conc!=null?g.composite_conc:g.concentration_ratio);
@@ -284,7 +284,7 @@ function Detail({g,onClose}){
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
           <Tag label={v.label} color={v.color} bg={v.bg}/>
-          {g.adj_prof_score!=null&&<ScoreRing score={g.adj_prof_score}/>}
+          {g.adj_prof_score!=null&&<ScoreRing score={g.adj_prof_score} scoreMax={scoreMax}/>}
         </div>
       </div>
 
@@ -316,7 +316,7 @@ function Detail({g,onClose}){
                 {" × "}WR: <strong style={{color:wrc}}>{g.wr_mult?.toFixed(3)}×</strong>
                 {" × "}EV|Win: <strong style={{color:evgwc}}>{g.evgw_mult?.toFixed(3)}×</strong>
                 {" = "}<strong style={{color:C.green}}>{g.adj_prof_score?.toFixed(4)}</strong>
-                {" ("}{(g.adj_prof_score/DB.score_max*100).toFixed(1)}{"% of max)"}
+                {" ("}{(g.adj_prof_score/scoreMax*100).toFixed(1)}{"% of max)"}
               </div>
             </div>
           </>
@@ -722,7 +722,7 @@ export default function App(){
             {filtered.length} game{filtered.length!==1?"s":""} · tap any card for full analysis
           </div>
           <div style={{padding:"0 12px 24px"}}>
-            {filtered.map((g,i)=><GameCard key={g.game_number} g={g} rank={i+1} onClick={setSelected}/>)}
+            {filtered.map((g,i)=><GameCard key={g.game_number} g={g} rank={i+1} onClick={setSelected} scoreMax={DB.score_max}/>)}
             {!filtered.length&&(
               <div style={{textAlign:"center",color:C.dim,padding:60,fontSize:".8rem"}}>No games match your filters.</div>
             )}
@@ -730,7 +730,7 @@ export default function App(){
         </>
       )}
 
-      {selected&&<Detail g={selected} onClose={()=>setSelected(null)}/>}
+      {selected&&<Detail g={selected} onClose={()=>setSelected(null)} scoreMax={DB.score_max}/>}
     </div>
   );
 }
