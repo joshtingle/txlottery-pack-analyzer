@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Component } from "react";
 
 const fmt    = (n,d=0) => n==null||isNaN(n)?"—":Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const pct    = (n,d=1) => n!=null&&!isNaN(n)?(Number(n)*100).toFixed(d)+"%":"—";
@@ -572,7 +572,22 @@ function Roadmap(){
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-export default function App(){
+class ErrorBoundary extends Component {
+  constructor(props){super(props);this.state={error:null};}
+  static getDerivedStateFromError(error){return {error};}
+  render(){
+    if(this.state.error) return(
+      <div style={{padding:20,color:"#fff",background:"#1a1a2e",fontFamily:"monospace",whiteSpace:"pre-wrap"}}>
+        <h2 style={{color:"red"}}>Render Error</h2>
+        <p>{this.state.error.message}</p>
+        <p>{this.state.error.stack}</p>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
+function AppInner(){
   const [DB,setDB]=useState(null);
   const [tab,setTab]=useState("games");
   const [selected,setSelected]=useState(null);
@@ -733,4 +748,8 @@ export default function App(){
       {selected&&<Detail g={selected} onClose={()=>setSelected(null)} scoreMax={DB.score_max}/>}
     </div>
   );
+}
+
+export default function App(){
+  return <ErrorBoundary><AppInner/></ErrorBoundary>;
 }
