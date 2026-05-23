@@ -1,0 +1,26 @@
+# Database and runtime outputs
+tx_lottery.db
+tx_lottery_latest.json
+tx_lottery.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Node
+ui/node_modules/
+ui/dist/
+
+# Env / secrets
+.env
+*.env
+
+# Claude Code local project data
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db

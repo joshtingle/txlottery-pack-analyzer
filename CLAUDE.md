@@ -1,0 +1,315 @@
+# TX Lottery Scratcher Analytics
+
+## Project Overview
+
+A daily data pipeline and mobile-first React dashboard that identifies which
+Texas Lottery scratch ticket packs offer the best risk-adjusted expected value.
+The core insight is that the guarantee floor on packs transforms a pure gamble
+into a bounded-loss proposition, making quantitative analysis actionable.
+
+The project has two deliverables:
+- **`tx_lottery_scraper.py`** — Python pipeline that fetches TX Lottery data and
+  builds a local SQLite database of prize pool analytics
+- **`tx-lottery-analyzer.jsx`** — React (single-file artifact) mobile-first
+  dashboard that displays rankings and detailed analysis per game
+
+---
+
+## Architecture
+
+### Data Sources
+
+| Source | URL | Notes |
+|--------|-----|-------|
+| Prize CSV | `https://www.texaslottery.com/export/sites/lottery/Games/Scratch_Offs/scratchoff.csv` | Changes daily. Contains prize levels, counts claimed. |
+| Game listing | `.../all.html` | CMS page listing all active games with detail page links |
+| Detail pages | `.../details.html_NNNNNN.html` | Per-game page with pack size, guarantee, total tickets printed, launch odds |
+
+**WAF constraint:** The TX Lottery site blocks all server-side fetches (Cloudflare
+WAF). Data must be fetched from a local machine where the browser session passes
+the WAF. Claude Code and local Python work fine. Artifact sandboxes and CI do not.
+
+### Database Schema (SQLite — `tx_lottery.db`)
+
+Three tables:
+
+**`games_static`** — scraped once per game from detail pages, rarely changes
+```
+game_number, game_name, ticket_price, pack_size, guarantee_per_pack,
+total_tickets_printed, overall_odds_launch, detail_url
+```
+
+**`prize_levels`** — one row per prize tier per snapshot date
+```
+game_number, snapshot_date, prize_amount, total_printed, claimed, remaining,
+retention_rate
+```
+
+**`games_analysis`** — computed analytics, one row per game per snapshot
+```
+game_number, snapshot_date, maturity, sell_through, ev_per_pack,
+roi_on_max_loss, composite_conc, win_rate_ratio, ev_given_win_ratio,
+entropy_delta, adj_prof_score, verdict, ... (many computed fields)
+```
+
+### Scraper Modes
+
+```bash
+python tx_lottery_scraper.py              # full run
+python tx_lottery_scraper.py --bootstrap  # re-fetch all detail pages
+python tx_lottery_scraper.py --daily-only # CSV only, skip detail scrape
+python tx_lottery_scraper.py --db sqlite  # force SQLite (default)
+```
+
+Runs via Windows Task Scheduler daily at 6 AM.
+
+---
+
+## Analytics Framework
+
+All metrics are computed in the scraper and stored in `games_analysis`.
+The dashboard reads from `tx_lottery_latest.json` (exported after each run).
+
+### Core EV Model
+
+**Sell-through anchor** — sell-through rate is estimated from the smallest prize
+tier's claim rate (not overall maturity). This is intentional: small prizes are
+cashed almost immediately, so their claim rate is the best proxy for actual tickets
+sold. Using overall maturity over-estimates tickets remaining for games where
+top prizes have been hit disproportionately.
+
+```
+sell_through    = smallest_prize_claimed / smallest_prize_printed
+remaining_tix   = total_tickets_printed × (1 - sell_through)
+ev_per_ticket   = sum(remaining_i × amount_i) / remaining_tix   [all tiers]
+ev_per_pack     = ev_per_ticket × pack_size
+above_guarantee = ev_per_pack - guarantee_per_pack
+roi_on_max_loss = above_guarantee / max_loss_per_pack
+max_loss        = pack_cost - guarantee_per_pack
+```
+
+### Pool Quality Signals
+
+| Signal | Formula | Interpretation |
+|--------|---------|----------------|
+| **Win rate drift** | `current_win_rate / launch_win_rate` | >1.0× = more winners per remaining ticket than at launch |
+| **EV\|win drift** | `ev_given_win_current / ev_given_win_launch` | >1.0× = average winning ticket worth more than at launch |
+| **Entropy delta** | `current_entropy - launch_entropy` | Negative = prizes concentrating into fewer tiers |
+| **Weighted skew** | Prize-$-weighted deviation from overall retention | Positive = big prizes retaining better than average |
+
+### Scarcity-Tiered Concentration
+
+Prize levels are classified by scarcity (1-in-X odds):
+
+| Tier | Threshold | Signal |
+|------|-----------|--------|
+| 💎 ultra_rare | 1 in 500,000+ | True jackpots — hypergeometric pack probability |
+| 🔴 rare | 1 in 50,000+ | Major prizes — stable concentration signal |
+| 🟠 scarce | 1 in 5,000+ | Big prizes — meaningful drift signal |
+| 🟡 uncommon | 1 in 500+ | Mid prizes — low signal, use for EV only |
+| ⚪ common | < 1 in 500 | Base prizes — EV anchor only, concentration is noise |
+
+**Composite concentration** weights each meaningful tier's concentration ratio by
+`tier_rank² × ln(prize_amount)`. Ultra-rare prizes get ~16× the weight of scarce
+prizes. Games with zero meaningful tiers (e.g. $100/$200/$500/$1,000) get a
+neutral multiplier — concentration analysis is not applicable to them.
+
+### Composite Profitability Score
+
+```
+base_score  = roi_on_max_loss × maturity_confidence × floor_protection
+
+maturity_confidence = (m² × (1-m) × 6)  clamped 0–1, peaks at ~65% sold
+floor_protection    = guarantee / pack_cost
+
+adj_score = base_score
+          × sigmoid_mult(composite_conc,  k=6,  max_boost=±0.45)
+          × sigmoid_mult(jp_conc_ratio,   k=4,  max_boost=±0.25)
+          × sigmoid_mult(win_rate_ratio,  k=8,  max_boost=±0.12)
+          × sigmoid_mult(ev_given_win_ratio, k=10, max_boost=±0.10)
+
+sigmoid_mult(x, k, b) = 1 + tanh(k × (x - 1.0)) × b
+```
+
+All multipliers are anchored to 1.0 at neutral — no signal produces no
+adjustment. The sigmoid curve means genuinely exceptional concentration
+(1.45×) separates cleanly from merely good (1.08×) without a hard ceiling.
+
+### Verdict Tiers (percentile-based, recalibrated each run)
+
+| Verdict | Threshold | Current cutoff |
+|---------|-----------|----------------|
+| Elite | Top 5% | adj_score ≥ 0.315 |
+| Strong Buy | Top 18% | adj_score ≥ 0.200 |
+| Consider | Top 45% | adj_score ≥ 0.125 |
+| Marginal | EV > guarantee | adj_score < 0.125 |
+| Avoid | EV ≤ guarantee | — |
+| Too New | maturity < 10% | — |
+| Nearly Exhausted | maturity > 92% | — |
+
+Score gauge normalizes against `DB.score_max` (actual dataset max) so #1
+always reads 100 and relative positions are meaningful.
+
+### Monte Carlo Scenarios
+
+20,000 simulated pack draws using binomial approximation per tier:
+- Returns P10, P25, P50, P75, P90 of total pack return in dollars
+- **Guarantee adequacy** = guarantee / P10 — above 1.5× means the floor is
+  genuinely protective
+- **Variance score** = P90 / P10 — lower means more predictable outcome
+
+---
+
+## Dashboard (`tx-lottery-analyzer.jsx`)
+
+Single-file React artifact. All data is embedded as a `const DB = {...}` at
+the top of the file — there is no runtime API call.
+
+### Key Design Decisions
+
+- Mobile-first, max-width 600px, Poppins font, dark gray theme
+- Detail view is a full-screen page (not a modal) to avoid mobile overflow issues
+- Score ring gauge normalizes against `DB.score_max` — never hardcode a max
+- The `actionable` check in `GameCard` must include `"elite"` — do not remove it
+- Concentration panels use `composite_conc` if available, fallback to
+  `concentration_ratio` — games with no meaningful tiers show an explanatory note
+- Prize table rows sorted descending by prize amount (highest at top)
+- Jackpot concentration bar uses `asOdds=true` which expresses probability as
+  "1 in X" — jackpot percentages are too small to read as decimals
+
+### Data Flow for Updates
+
+1. Run `tx_lottery_scraper.py` — produces `tx_lottery_latest.json`
+2. Open `tx-lottery-analyzer.jsx`
+3. Replace the `const DB = {...};` constant with contents of the new JSON
+4. Rebuild the artifact
+
+**Future goal:** Wire the dashboard to accept a JSON file drop so step 3–4 is
+automatic. This is on the roadmap.
+
+### Filters and Sort Options
+
+The dashboard has three filter controls:
+- Verdict filter: Actionable (elite+strong_buy+consider) | Elite | Strong Buy |
+  Consider | Marginal | All
+- Price filter: All | $1 | $2 | $3 | $5 | $10 | $20 | $30 | $50 | $100
+- Sort: Composite Score | ROI | EV/Pack | Win Rate Drift | EV|Win Drift |
+  Concentration | Guarantee Adequacy | Lowest Variance | Lowest Max Loss |
+  Best Floor | Most Mature | Ticket Price
+
+---
+
+## File Inventory
+
+```
+tx_lottery_scraper.py       Python pipeline (fetch → compute → store)
+tx-lottery-analyzer.jsx     React dashboard (single-file, data embedded)
+tx_lottery.db               SQLite database (not in repo — local only)
+tx_lottery_latest.json      Latest export for dashboard refresh
+tx_lottery.log              Scraper run log
+CLAUDE.md                   This file
+```
+
+---
+
+## Environment & Dependencies
+
+### Python (scraper)
+
+```
+requests
+beautifulsoup4
+pyodbc          # optional — only needed for SQL Server mode
+```
+
+Install: `pip install requests beautifulsoup4`
+
+### SQL Server (optional)
+
+RDS endpoint: `jtdc-sqlsrvr.cmhhlofylcq6.us-east-1.rds.amazonaws.com`
+Database: `TxLottery`
+
+Credentials via environment variables:
+```
+TXLOTTERY_SERVER
+TXLOTTERY_UID
+TXLOTTERY_PWD
+```
+
+SQLite is the default and is sufficient for local use. SQL Server is only
+needed if you want the data accessible from other machines.
+
+### React dashboard
+
+No build step. Single `.jsx` file designed for claude.ai artifact renderer.
+Uses only: `react`, `recharts` (not currently used but available),
+`lucide-react` (not currently used). No external API calls at runtime.
+
+---
+
+## Roadmap (Priority Order)
+
+### Phase 1 — Needs 2+ daily snapshots
+- **Claim velocity by tier** — Δclaimed/day per tier, divergence between
+  top-tier (slow) and base-tier (fast) is the leading indicator of improving
+  concentration
+- **Momentum** — concentration_ratio trend over time, direction matters as
+  much as current level
+- **Win rate velocity** — is the pool enriching faster or slower each day?
+
+### Phase 2 — Needs systematic detail page scraping
+- **Time-adjusted pack value** — urgency premium for games closing soon
+- **Guaranteed winners efficiency** — implied winners per pack from guarantee
+  structure
+
+### Phase 3 — Needs historical data
+- **Cross-price normalized ROI** — compare $1 games to $100 games fairly
+- **Theoretical minimum pack return** — is the guarantee mathematically
+  meaningful or just marketing?
+
+### Phase 4 — Needs external data
+- **Retailer density score** — high-volume retailers deplete packs faster
+- **Second-chance drawing value** — currently ignored, adds EV for some games
+
+### Dashboard improvements (no data dependency)
+- JSON file drop for data refresh (eliminate manual DB constant replacement)
+- Per-game historical chart (requires multiple snapshots in DB)
+- Export to CSV / share sheet
+
+### Phase 5 — Prize distribution within packs (needs quant analysis + possibly TX Lottery pack structure data)
+- **Intra-pack prize clustering** — user hypothesis: large prizes are unlikely to
+  appear in closely-aligned pack numbers (i.e. prizes are not clustered but spread).
+  Needs a quant deep-dive: is the TX Lottery distribution uniform-random across
+  ticket positions? Are there regulatory requirements on prize spacing? Does
+  pack-position data exist anywhere in the public record?
+  If non-random spacing is confirmed, it changes how pack-selection advice should
+  be framed — a freshly-opened pack is *not* equivalent to a pack that is 30%
+  sold from the middle, even at the same sell-through rate.
+  **Discuss with Claude acting as principal quantitative analyst before implementing.**
+
+---
+
+## Known Issues / Watch-outs
+
+1. **WAF blocks server-side fetches** — never attempt to run the scraper from
+   a cloud environment, CI pipeline, or Claude Code's own network. Must run
+   locally.
+
+2. **Verdict thresholds are percentile-based** — they recalibrate every run
+   as the game universe changes. A game that was "Strong Buy" last week may
+   become "Consider" this week without any change to its own metrics if the
+   overall field improved. This is intentional.
+
+3. **Four games missing pack data** — Cash On The Spot, Winning 7s,
+   Easy 1-2-3, Cash Frenzy (all $1 tickets). The detail pages for very
+   low-priced games may not publish guarantee data. These will never have
+   ROI scores.
+
+4. **Concentration analysis not applicable to all-common games** — games like
+   $100/$200/$500/$1,000 have no scarce or rarer prize tiers. The composite
+   concentration multiplier correctly returns 1.0 for these. Do not apply
+   concentration logic to common-only games.
+
+5. **`adj_prof_score` is the ranking field** — not `prof_score`. All sorts,
+   filters, and the score ring use `adj_prof_score`. The `prof_score` field
+   is the pre-multiplier base used for decomposition display only.
