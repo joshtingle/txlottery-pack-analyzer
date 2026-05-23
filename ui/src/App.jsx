@@ -151,7 +151,7 @@ function GameCard({g,rank,onClick,scoreMax}){
     <div onClick={()=>actionable&&onClick(g)}
       style={{background:C.s1,border:`1px solid ${C.b1}`,borderRadius:12,padding:"14px 16px",
         cursor:actionable?"pointer":"default",
-        opacity:["too_new","no_data"].includes(g.verdict)?.4:1,marginBottom:10}}>
+        opacity:["too_new","no_data"].includes(g.verdict)?.4:1}}>
 
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -288,7 +288,7 @@ function Detail({g,onClose,scoreMax}){
         </div>
       </div>
 
-      <div style={{padding:"14px 16px 48px"}}>
+      <div className="detail-inner" style={{padding:"14px 16px 48px"}}>
 
         {/* Score breakdown */}
         {g.adj_prof_score!=null&&(
@@ -651,7 +651,7 @@ function AppInner(){
     borderRadius:8,outline:"none",cursor:"pointer",width:"100%"};
 
   return(
-    <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'Poppins',sans-serif",maxWidth:600,margin:"0 auto"}}>
+    <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'Poppins',sans-serif",margin:"0 auto"}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
         *{box-sizing:border-box;margin:0;padding:0}
@@ -660,10 +660,15 @@ function AppInner(){
         ::-webkit-scrollbar-thumb{background:#333338;border-radius:2px}
         select option{background:#18181c}
         input::placeholder{color:#58586a}
+        .card-grid{display:grid;grid-template-columns:1fr;gap:10px}
+        @media(min-width:768px){.card-grid{grid-template-columns:1fr 1fr}}
+        @media(min-width:1200px){.card-grid{grid-template-columns:1fr 1fr 1fr}}
+        .detail-inner{max-width:700px;margin:0 auto}
       `}</style>
 
       {/* Header */}
       <div style={{background:C.s1,borderBottom:`1px solid ${C.b1}`,padding:"12px 16px 0",position:"sticky",top:0,zIndex:20}}>
+        <div style={{maxWidth:1400,margin:"0 auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
           <div>
             <div style={{fontSize:"1rem",fontWeight:700,color:C.text}}>
@@ -695,30 +700,29 @@ function AppInner(){
             </button>
           ))}
         </div>
+        </div>
       </div>
 
       {tab==="roadmap"?<Roadmap/>:(
         <>
           <div style={{padding:"10px 16px 8px",background:C.s1,borderBottom:`1px solid ${C.b1}`}}>
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            <div className="filter-bar" style={{display:"flex",flexWrap:"wrap",gap:8,maxWidth:1400,margin:"0 auto",alignItems:"center"}}>
               <input value={search} onChange={e=>setSearch(e.target.value)}
                 placeholder="Search game name or number..."
-                style={{...ctrl,padding:"9px 12px"}}/>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                <select value={verdictF} onChange={e=>setVerdictF(e.target.value)} style={ctrl}>
-                  <option value="actionable">Actionable</option>
-                  <option value="elite">Elite only</option>
-                  <option value="strong_buy">Strong Buy</option>
-                  <option value="consider">Consider</option>
-                  <option value="marginal">Marginal</option>
-                  <option value="all">All</option>
-                </select>
-                <select value={priceF} onChange={e=>setPriceF(e.target.value)} style={ctrl}>
-                  <option value="all">All prices</option>
-                  {prices.map(p=><option key={p} value={p}>${p}</option>)}
-                </select>
-              </div>
-              <select value={sortKey} onChange={e=>setSortKey(e.target.value)} style={ctrl}>
+                style={{...ctrl,padding:"9px 12px",flex:"1 1 200px",minWidth:150}}/>
+              <select value={verdictF} onChange={e=>setVerdictF(e.target.value)} style={{...ctrl,flex:"0 1 160px"}}>
+                <option value="actionable">Actionable</option>
+                <option value="elite">Elite only</option>
+                <option value="strong_buy">Strong Buy</option>
+                <option value="consider">Consider</option>
+                <option value="marginal">Marginal</option>
+                <option value="all">All</option>
+              </select>
+              <select value={priceF} onChange={e=>setPriceF(e.target.value)} style={{...ctrl,flex:"0 1 130px"}}>
+                <option value="all">All prices</option>
+                {prices.map(p=><option key={p} value={p}>${p}</option>)}
+              </select>
+              <select value={sortKey} onChange={e=>setSortKey(e.target.value)} style={{...ctrl,flex:"0 1 220px"}}>
                 <option value="adj_score">Sort: Composite Score</option>
                 <option value="roi">Sort: ROI on Max Loss</option>
                 <option value="ev">Sort: EV per Pack</option>
@@ -734,13 +738,13 @@ function AppInner(){
               </select>
             </div>
           </div>
-          <div style={{padding:"6px 16px 4px",fontSize:".62rem",color:C.dim}}>
+          <div style={{padding:"6px 16px 4px",fontSize:".62rem",color:C.dim,maxWidth:1400,margin:"0 auto"}}>
             {filtered.length} game{filtered.length!==1?"s":""} · tap any card for full analysis
           </div>
-          <div style={{padding:"0 12px 24px"}}>
+          <div className="card-grid" style={{padding:"0 12px 24px",maxWidth:1432,margin:"0 auto"}}>
             {filtered.map((g,i)=><GameCard key={g.game_number} g={g} rank={i+1} onClick={setSelected} scoreMax={DB.score_max}/>)}
             {!filtered.length&&(
-              <div style={{textAlign:"center",color:C.dim,padding:60,fontSize:".8rem"}}>No games match your filters.</div>
+              <div style={{textAlign:"center",color:C.dim,padding:60,fontSize:".8rem",gridColumn:"1/-1"}}>No games match your filters.</div>
             )}
           </div>
         </>
