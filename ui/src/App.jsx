@@ -31,16 +31,6 @@ const VERDICTS = {
   no_data:          {label:"No Data",    color:C.dim,    bg:C.s3},
 };
 
-function useBreakpoint(){
-  const [w,setW]=useState(()=>typeof window!=="undefined"?window.innerWidth:600);
-  useEffect(()=>{
-    const h=()=>setW(window.innerWidth);
-    window.addEventListener("resize",h);
-    return ()=>window.removeEventListener("resize",h);
-  },[]);
-  return w>=1024?"lg":w>=640?"md":"sm";
-}
-
 function vm(v){ return VERDICTS[v]||VERDICTS.no_data; }
 function roiColor(r){ return r>=0.5?C.green:r>=0.25?C.amber:r>=0?C.sub:C.red; }
 function ratioColor(r,t=1.0){ return r==null?C.dim:r>=(t+0.02)?C.green:r>=(t-0.02)?C.sub:r>=(t-0.10)?C.amber:C.red; }
@@ -70,8 +60,8 @@ function Bar({v=0,color,h=5}){
 function Tag({label,color,bg}){
   return <span style={{fontSize:".6rem",fontWeight:600,padding:"2px 8px",borderRadius:4,color,background:bg,whiteSpace:"nowrap"}}>{label}</span>;
 }
-function ScoreRing({score,scoreMax}){
-  const max=scoreMax||0.42;
+function ScoreRing({score}){
+  const max=DB.score_max||0.42;
   const p=Math.min(1,Math.max(0,(score||0)/max));
   const r=20,circ=2*Math.PI*r,dash=circ*p;
   const color=p>=0.7?C.green:p>=0.4?C.amber:C.red;
@@ -139,7 +129,7 @@ function ConcPanel({title,launchP,currP,ratio,printed,remaining,note,asOdds}){
         ))}
       </div>
       <div style={{fontSize:".62rem",fontWeight:600,color:cc,marginBottom:note?6:0}}>
-        {remaining===0?"All prizes in this tier claimed"
+        {remaining===0?"⚠ All prizes in this tier claimed"
          :ratio>=1?`▲ ${((ratio-1)*100).toFixed(1)}% more likely than at launch`
          :`▼ ${((1-ratio)*100).toFixed(1)}% less likely than at launch`}
       </div>
@@ -149,7 +139,7 @@ function ConcPanel({title,launchP,currP,ratio,printed,remaining,note,asOdds}){
 }
 
 // ── GameCard ──────────────────────────────────────────────────────────────────
-function GameCard({g,rank,scoreMax,onClick}){
+function GameCard({g,rank,onClick}){
   const v=vm(g.verdict);
   const actionable=["elite","strong_buy","consider"].includes(g.verdict);
   const rc=g.roi_on_max_loss!=null?roiColor(g.roi_on_max_loss):C.dim;
@@ -161,15 +151,14 @@ function GameCard({g,rank,scoreMax,onClick}){
     <div onClick={()=>actionable&&onClick(g)}
       style={{background:C.s1,border:`1px solid ${C.b1}`,borderRadius:12,padding:"14px 16px",
         cursor:actionable?"pointer":"default",
-        opacity:["too_new","no_data"].includes(g.verdict)?.4:1,
-        height:"fit-content"}}>
+        opacity:["too_new","no_data"].includes(g.verdict)?.4:1,marginBottom:10}}>
 
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <Tag label={v.label} color={v.color} bg={v.bg}/>
           {rank<=10&&actionable&&<span style={{fontSize:".6rem",color:C.dim}}>#{rank}</span>}
         </div>
-        {actionable&&g.adj_prof_score!=null&&<ScoreRing score={g.adj_prof_score} scoreMax={scoreMax}/>}
+        {actionable&&g.adj_prof_score!=null&&<ScoreRing score={g.adj_prof_score}/>}
       </div>
 
       <div style={{fontSize:"1rem",fontWeight:600,color:C.text,marginBottom:3}}>{g.game_name}</div>
@@ -186,6 +175,7 @@ function GameCard({g,rank,scoreMax,onClick}){
         </div>
       ):(
         <>
+          {/* Primary 3 */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7,marginBottom:10}}>
             {[
               {label:"ROI on Risk",  val:pct(g.roi_on_max_loss,0),   color:rc},
@@ -199,6 +189,7 @@ function GameCard({g,rank,scoreMax,onClick}){
             ))}
           </div>
 
+          {/* Signal row */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7,marginBottom:10}}>
             {[
               {label:"Win Rate",  val:x1(g.win_rate_ratio),     color:wrc,  tip:"vs launch"},
@@ -213,6 +204,7 @@ function GameCard({g,rank,scoreMax,onClick}){
             ))}
           </div>
 
+          {/* Scenario bar */}
           {g.scenario_p10!=null&&(
             <div style={{background:C.s3,borderRadius:8,padding:"9px 11px",marginBottom:10}}>
               <div style={{fontSize:".58rem",color:C.sub,marginBottom:7}}>Pack return scenarios · floor: {dollar(g.guarantee_per_pack)}</div>
@@ -238,6 +230,7 @@ function GameCard({g,rank,scoreMax,onClick}){
             </div>
           )}
 
+          {/* Confidence strips */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
             {[
               {label:"Maturity confidence",v:g.maturity_confidence||0,color:C.blue},
@@ -270,7 +263,7 @@ function GameCard({g,rank,scoreMax,onClick}){
 }
 
 // ── Detail view ───────────────────────────────────────────────────────────────
-function Detail({g,scoreMax,sm,onClose}){
+function Detail({g,onClose}){
   const v=vm(g.verdict);
   const rc=roiColor(g.roi_on_max_loss||0);
   const cc=concColor(g.composite_conc!=null?g.composite_conc:g.concentration_ratio);
@@ -291,13 +284,13 @@ function Detail({g,scoreMax,sm,onClose}){
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
           <Tag label={v.label} color={v.color} bg={v.bg}/>
-          {g.adj_prof_score!=null&&<ScoreRing score={g.adj_prof_score} scoreMax={scoreMax}/>}
+          {g.adj_prof_score!=null&&<ScoreRing score={g.adj_prof_score}/>}
         </div>
       </div>
 
-      {/* Content — centered and width-capped on desktop */}
-      <div style={{padding:"14px 16px 48px",...(!sm&&{maxWidth:760,margin:"0 auto"})}}>
+      <div style={{padding:"14px 16px 48px"}}>
 
+        {/* Score breakdown */}
         {g.adj_prof_score!=null&&(
           <>
             <SectionHeader label="Profitability Score" sub="ROI × Maturity Confidence × Floor Protection × Signal Multipliers"/>
@@ -323,12 +316,13 @@ function Detail({g,scoreMax,sm,onClose}){
                 {" × "}WR: <strong style={{color:wrc}}>{g.wr_mult?.toFixed(3)}×</strong>
                 {" × "}EV|Win: <strong style={{color:evgwc}}>{g.evgw_mult?.toFixed(3)}×</strong>
                 {" = "}<strong style={{color:C.green}}>{g.adj_prof_score?.toFixed(4)}</strong>
-                {" ("}{scoreMax>0?(g.adj_prof_score/scoreMax*100).toFixed(1):"—"}{"% of max)"}
+                {" ("}{(g.adj_prof_score/DB.score_max*100).toFixed(1)}{"% of max)"}
               </div>
             </div>
           </>
         )}
 
+        {/* Pool quality */}
         <SectionHeader label="Pool Quality Signals" sub="How the remaining prize pool has evolved since launch"/>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
           <Tile label="Win Rate Now"      val={pct(g.current_win_rate,2)}        sub={`Was ${pct(g.launch_win_rate,2)} at launch`} color={wrc} accent={wrc+"33"}/>
@@ -341,6 +335,7 @@ function Detail({g,scoreMax,sm,onClose}){
           <Tile label="Expected Winners"  val={`${g.expected_winners_current?.toFixed(1)||"—"}/pack`} sub={`Was ${g.expected_winners_launch?.toFixed(1)||"—"} at launch`}/>
         </div>
 
+        {/* Pack analytics */}
         {g.pack_cost&&(
           <>
             <SectionHeader label="Pack Analytics"/>
@@ -357,6 +352,7 @@ function Detail({g,scoreMax,sm,onClose}){
           </>
         )}
 
+        {/* Scenarios */}
         {g.scenario_p50!=null&&(
           <>
             <SectionHeader label="Pack Return Scenarios" sub="Monte Carlo simulation — 20,000 simulated packs"/>
@@ -411,6 +407,7 @@ function Detail({g,scoreMax,sm,onClose}){
           </>
         )}
 
+        {/* Composite concentration */}
         <SectionHeader label={`Scarcity-Weighted Concentration`} sub={`${g.n_meaningful_tiers} meaningful tier${g.n_meaningful_tiers!==1?"s":""} (scarce/rare/ultra-rare)`}/>
         {g.n_meaningful_tiers>0?(
           <ConcPanel
@@ -424,6 +421,7 @@ function Detail({g,scoreMax,sm,onClose}){
           </div>
         )}
 
+        {/* Jackpot concentration */}
         <SectionHeader label={`Jackpot Concentration (${dollar(g.jp_amount)})`}/>
         <ConcPanel
           title={`${g.jp_remaining} of ${g.jp_printed} jackpot${g.jp_printed!==1?"s":""} remain`}
@@ -434,6 +432,7 @@ function Detail({g,scoreMax,sm,onClose}){
             :g.jp_conc_ratio>=1.0?"Jackpot more concentrated than at launch — odds have improved."
             :"Jackpot draining faster than overall pool."}/>
 
+        {/* Prize table */}
         <SectionHeader label="Prize Level Detail" sub="Deviation = this tier's retention minus overall retention"/>
         <div style={{background:C.s2,border:`1px solid ${C.b1}`,borderRadius:10,overflow:"hidden",marginBottom:20}}>
           {(g.prize_levels||[]).slice().reverse().map((pl,i)=>{
@@ -450,9 +449,9 @@ function Detail({g,scoreMax,sm,onClose}){
                   <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                     <span style={{fontSize:".88rem",fontWeight:700,color:isJP?C.green:isM?tc:isAnchor?C.blue:C.amber}}>{dollar(pl.amount)}</span>
                     {isJP&&<Tag label="jackpot" color={C.green} bg={C.greenBg}/>}
-                    {pl.tier==="ultra_rare"&&!isJP&&<Tag label="ultra rare" color={C.green} bg={C.greenBg}/>}
-                    {pl.tier==="rare"&&<Tag label="rare" color={C.red} bg={C.redBg}/>}
-                    {pl.tier==="scarce"&&<Tag label="scarce" color={C.amber} bg={C.amberBg}/>}
+                    {pl.tier==="ultra_rare"&&!isJP&&<Tag label="💎 ultra rare" color={C.green} bg={C.greenBg}/>}
+                    {pl.tier==="rare"&&<Tag label="🔴 rare" color={C.red} bg={C.redBg}/>}
+                    {pl.tier==="scarce"&&<Tag label="🟠 scarce" color={C.amber} bg={C.amberBg}/>}
                     {isAnchor&&<Tag label="EV anchor" color={C.blue} bg={C.blueBg}/>}
                   </div>
                   <div style={{textAlign:"right"}}>
@@ -530,10 +529,10 @@ const ROADMAP = [
     ],
   },
 ];
-function Roadmap({sm}){
+function Roadmap(){
   const [open,setOpen]=useState({});
   return(
-    <div style={{padding:"14px 16px 48px",...(!sm&&{maxWidth:900,margin:"0 auto"})}}>
+    <div style={{padding:"14px 16px 48px"}}>
       <div style={{marginBottom:16}}>
         <div style={{fontSize:"1rem",fontWeight:700,color:C.text,marginBottom:4}}>Analysis Roadmap</div>
         <div style={{fontSize:".68rem",color:C.dim,lineHeight:1.6}}>Metrics we want to build, organized by data dependency. Phase 1 unlocks the moment we have 2 daily snapshots.</div>
@@ -572,17 +571,9 @@ function Roadmap({sm}){
   );
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
-
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function App(){
-  const bp=useBreakpoint();
-  const sm=bp==="sm";
-  const lg=bp==="lg";
-
-  const [dbData,setDbData]=useState(null);
-  const [loading,setLoading]=useState(true);
-  const [error,setError]=useState(null);
+  const [DB,setDB]=useState(null);
   const [tab,setTab]=useState("games");
   const [selected,setSelected]=useState(null);
   const [verdictF,setVerdictF]=useState("actionable");
@@ -590,29 +581,25 @@ export default function App(){
   const [sortKey,setSortKey]=useState("adj_score");
   const [search,setSearch]=useState("");
 
-  async function fetchSnapshot(url){
-    setLoading(true);
-    setError(null);
-    setSelected(null);
-    try{
-      const res=await fetch(url);
-      if(!res.ok) throw new Error(`HTTP ${res.status}`);
-      setDbData(await res.json());
-    }catch(e){
-      setError(e.message);
-    }finally{
-      setLoading(false);
-    }
-  }
+  useEffect(()=>{
+    const base=import.meta.env.VITE_API_BASE_URL||"";
+    fetch(`${base}/api/latest`)
+      .then(r=>r.json())
+      .then(data=>setDB(data))
+      .catch(err=>console.error("Failed to load data:",err));
+  },[]);
 
-  useEffect(()=>{ fetchSnapshot(`${API_BASE}/api/latest`); },[]);
+  if(!DB) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontFamily:"Poppins,sans-serif",background:"#1a1a2e",color:"#e0e0e0"}}>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontSize:"2rem",marginBottom:"0.5rem"}}>Loading...</div>
+        <div style={{color:"#888"}}>Fetching lottery data</div>
+      </div>
+    </div>
+  );
 
-  const games=dbData?.games||[];
-  const asOf=dbData?.asOf||"";
-  const scoreMax=dbData?.score_max||0.42;
-  const snapshots=dbData?.snapshots||[];
-
-  const prices=useMemo(()=>[...new Set(games.map(g=>g.ticket_price))].sort((a,b)=>a-b),[games]);
+  const games=DB.games, asOf=DB.asOf;
+  const prices=useMemo(()=>[...new Set(games.map(g=>g.ticket_price))].sort((a,b)=>a-b),[]);
 
   const filtered=useMemo(()=>{
     let list=[...games];
@@ -637,7 +624,7 @@ export default function App(){
       return a.game_name.localeCompare(b.game_name);
     });
     return list;
-  },[games,search,priceF,verdictF,sortKey]);
+  },[search,priceF,verdictF,sortKey]);
 
   const elites  = games.filter(g=>g.verdict==="elite"&&g.adj_prof_score!=null);
   const buys    = games.filter(g=>g.verdict==="strong_buy"&&g.adj_prof_score!=null);
@@ -647,12 +634,10 @@ export default function App(){
     fontFamily:"'Poppins',sans-serif",fontSize:".76rem",padding:"7px 11px",
     borderRadius:8,outline:"none",cursor:"pointer",width:"100%"};
 
-  // Card grid: 1 col on mobile, 2 on tablet, 3 on desktop
-  const cardCols=sm?"1fr":lg?"repeat(3,1fr)":"repeat(2,1fr)";
-
   return(
-    <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'Poppins',sans-serif"}}>
+    <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'Poppins',sans-serif",maxWidth:600,margin:"0 auto"}}>
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
         *{box-sizing:border-box;margin:0;padding:0}
         ::-webkit-scrollbar{width:4px}
         ::-webkit-scrollbar-track{background:#18181c}
@@ -661,31 +646,20 @@ export default function App(){
         input::placeholder{color:#58586a}
       `}</style>
 
-      {/* ── Header ── */}
+      {/* Header */}
       <div style={{background:C.s1,borderBottom:`1px solid ${C.b1}`,padding:"12px 16px 0",position:"sticky",top:0,zIndex:20}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
           <div>
             <div style={{fontSize:"1rem",fontWeight:700,color:C.text}}>
               TX Lottery <span style={{color:C.green}}>Pack Analyzer</span>
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
-              <span style={{fontSize:".58rem",color:C.dim}}>Snapshot:</span>
-              {snapshots.length>1?(
-                <select value={asOf} onChange={e=>fetchSnapshot(`${API_BASE}/api/snapshot/${e.target.value}`)}
-                  style={{background:"transparent",border:"none",color:C.sub,fontFamily:"'Poppins',sans-serif",
-                    fontSize:".58rem",cursor:"pointer",outline:"none",padding:0}}>
-                  {snapshots.map(s=><option key={s} value={s}>{s}</option>)}
-                </select>
-              ):(
-                <span style={{fontSize:".58rem",color:C.sub}}>{asOf||"loading…"}</span>
-              )}
-            </div>
+            <div style={{fontSize:".58rem",color:C.dim,marginTop:1}}>Snapshot: {asOf}</div>
           </div>
           <div style={{display:"flex",gap:14}}>
             {[
-              {label:"Elite",      val:loading?"…":elites.length, color:C.gold},
-              {label:"Strong Buy", val:loading?"…":buys.length,   color:C.green},
-              {label:"Best ROI",   val:loading?"…":pct(bestROI,0),color:C.green},
+              {label:"Elite",      val:elites.length, color:C.gold},
+              {label:"Strong Buy", val:buys.length,   color:C.green},
+              {label:"Best ROI",   val:pct(bestROI,0),color:C.green},
             ].map(({label,val,color})=>(
               <div key={label} style={{textAlign:"right"}}>
                 <div style={{fontSize:".52rem",color:C.dim}}>{label}</div>
@@ -707,122 +681,56 @@ export default function App(){
         </div>
       </div>
 
-      {tab==="roadmap"?<Roadmap sm={sm}/>:(
+      {tab==="roadmap"?<Roadmap/>:(
         <>
-          {loading&&(
-            <div style={{textAlign:"center",padding:60,color:C.dim,fontSize:".8rem"}}>Loading…</div>
-          )}
-          {error&&(
-            <div style={{textAlign:"center",padding:40,color:C.red,fontSize:".8rem"}}>
-              Failed to load data: {error}
-              <div style={{marginTop:12}}>
-                <button onClick={()=>fetchSnapshot(`${API_BASE}/api/latest`)}
-                  style={{...ctrl,width:"auto",padding:"8px 20px"}}>Retry</button>
+          <div style={{padding:"10px 16px 8px",background:C.s1,borderBottom:`1px solid ${C.b1}`}}>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <input value={search} onChange={e=>setSearch(e.target.value)}
+                placeholder="Search game name or number..."
+                style={{...ctrl,padding:"9px 12px"}}/>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                <select value={verdictF} onChange={e=>setVerdictF(e.target.value)} style={ctrl}>
+                  <option value="actionable">Actionable</option>
+                  <option value="elite">Elite only</option>
+                  <option value="strong_buy">Strong Buy</option>
+                  <option value="consider">Consider</option>
+                  <option value="marginal">Marginal</option>
+                  <option value="all">All</option>
+                </select>
+                <select value={priceF} onChange={e=>setPriceF(e.target.value)} style={ctrl}>
+                  <option value="all">All prices</option>
+                  {prices.map(p=><option key={p} value={p}>${p}</option>)}
+                </select>
               </div>
+              <select value={sortKey} onChange={e=>setSortKey(e.target.value)} style={ctrl}>
+                <option value="adj_score">Sort: Composite Score</option>
+                <option value="roi">Sort: ROI on Max Loss</option>
+                <option value="ev">Sort: EV per Pack</option>
+                <option value="win_rate">Sort: Win Rate Drift</option>
+                <option value="evgw">Sort: EV|Win Drift</option>
+                <option value="conc">Sort: Concentration Score</option>
+                <option value="guar_adeq">Sort: Guarantee Adequacy</option>
+                <option value="variance">Sort: Lowest Variance</option>
+                <option value="maxloss">Sort: Lowest Max Loss</option>
+                <option value="floor">Sort: Best Floor Protection</option>
+                <option value="maturity">Sort: Most Mature</option>
+                <option value="price">Sort: Ticket Price</option>
+              </select>
             </div>
-          )}
-          {!loading&&!error&&(
-            <>
-              {/* ── Filters ── */}
-              <div style={{padding:"10px 16px 8px",background:C.s1,borderBottom:`1px solid ${C.b1}`}}>
-                {sm?(
-                  /* Mobile: stacked */
-                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                    <input value={search} onChange={e=>setSearch(e.target.value)}
-                      placeholder="Search game name or number..."
-                      style={{...ctrl,padding:"9px 12px"}}/>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                      <select value={verdictF} onChange={e=>setVerdictF(e.target.value)} style={ctrl}>
-                        <option value="actionable">Actionable</option>
-                        <option value="elite">Elite only</option>
-                        <option value="strong_buy">Strong Buy</option>
-                        <option value="consider">Consider</option>
-                        <option value="marginal">Marginal</option>
-                        <option value="all">All</option>
-                      </select>
-                      <select value={priceF} onChange={e=>setPriceF(e.target.value)} style={ctrl}>
-                        <option value="all">All prices</option>
-                        {prices.map(p=><option key={p} value={p}>${p}</option>)}
-                      </select>
-                    </div>
-                    <select value={sortKey} onChange={e=>setSortKey(e.target.value)} style={ctrl}>
-                      <option value="adj_score">Sort: Composite Score</option>
-                      <option value="roi">Sort: ROI on Max Loss</option>
-                      <option value="ev">Sort: EV per Pack</option>
-                      <option value="win_rate">Sort: Win Rate Drift</option>
-                      <option value="evgw">Sort: EV|Win Drift</option>
-                      <option value="conc">Sort: Concentration Score</option>
-                      <option value="guar_adeq">Sort: Guarantee Adequacy</option>
-                      <option value="variance">Sort: Lowest Variance</option>
-                      <option value="maxloss">Sort: Lowest Max Loss</option>
-                      <option value="floor">Sort: Best Floor Protection</option>
-                      <option value="maturity">Sort: Most Mature</option>
-                      <option value="price">Sort: Ticket Price</option>
-                    </select>
-                  </div>
-                ):(
-                  /* Tablet/Desktop: single row */
-                  <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1.5fr",gap:8}}>
-                    <input value={search} onChange={e=>setSearch(e.target.value)}
-                      placeholder="Search game name or number..."
-                      style={{...ctrl,padding:"9px 12px"}}/>
-                    <select value={verdictF} onChange={e=>setVerdictF(e.target.value)} style={ctrl}>
-                      <option value="actionable">Actionable</option>
-                      <option value="elite">Elite only</option>
-                      <option value="strong_buy">Strong Buy</option>
-                      <option value="consider">Consider</option>
-                      <option value="marginal">Marginal</option>
-                      <option value="all">All</option>
-                    </select>
-                    <select value={priceF} onChange={e=>setPriceF(e.target.value)} style={ctrl}>
-                      <option value="all">All prices</option>
-                      {prices.map(p=><option key={p} value={p}>${p}</option>)}
-                    </select>
-                    <select value={sortKey} onChange={e=>setSortKey(e.target.value)} style={ctrl}>
-                      <option value="adj_score">Sort: Composite Score</option>
-                      <option value="roi">Sort: ROI on Max Loss</option>
-                      <option value="ev">Sort: EV per Pack</option>
-                      <option value="win_rate">Sort: Win Rate Drift</option>
-                      <option value="evgw">Sort: EV|Win Drift</option>
-                      <option value="conc">Sort: Concentration Score</option>
-                      <option value="guar_adeq">Sort: Guarantee Adequacy</option>
-                      <option value="variance">Sort: Lowest Variance</option>
-                      <option value="maxloss">Sort: Lowest Max Loss</option>
-                      <option value="floor">Sort: Best Floor Protection</option>
-                      <option value="maturity">Sort: Most Mature</option>
-                      <option value="price">Sort: Ticket Price</option>
-                    </select>
-                  </div>
-                )}
-              </div>
-
-              <div style={{padding:"6px 16px 4px",fontSize:".62rem",color:C.dim}}>
-                {filtered.length} game{filtered.length!==1?"s":""} · tap any card for full analysis
-              </div>
-
-              {/* ── Card grid ── */}
-              <div style={{
-                display:"grid",
-                gridTemplateColumns:cardCols,
-                gap:10,
-                padding:sm?"0 12px 24px":"12px 16px 24px",
-                alignItems:"start",
-              }}>
-                {filtered.map((g,i)=>(
-                  <GameCard key={g.game_number} g={g} rank={i+1} scoreMax={scoreMax} onClick={setSelected}/>
-                ))}
-                {!filtered.length&&(
-                  <div style={{gridColumn:"1/-1",textAlign:"center",color:C.dim,padding:60,fontSize:".8rem"}}>
-                    No games match your filters.
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+          </div>
+          <div style={{padding:"6px 16px 4px",fontSize:".62rem",color:C.dim}}>
+            {filtered.length} game{filtered.length!==1?"s":""} · tap any card for full analysis
+          </div>
+          <div style={{padding:"0 12px 24px"}}>
+            {filtered.map((g,i)=><GameCard key={g.game_number} g={g} rank={i+1} onClick={setSelected}/>)}
+            {!filtered.length&&(
+              <div style={{textAlign:"center",color:C.dim,padding:60,fontSize:".8rem"}}>No games match your filters.</div>
+            )}
+          </div>
         </>
       )}
 
-      {selected&&<Detail g={selected} scoreMax={scoreMax} sm={sm} onClose={()=>setSelected(null)}/>}
+      {selected&&<Detail g={selected} onClose={()=>setSelected(null)}/>}
     </div>
   );
 }

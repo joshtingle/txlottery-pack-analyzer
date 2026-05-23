@@ -108,6 +108,11 @@ def build_snapshot(conn, snapshot_date: str) -> dict:
     }
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.get("/api/latest")
 def get_latest():
     conn = get_db()
