@@ -604,23 +604,9 @@ function AppInner(){
       .catch(err=>console.error("Failed to load data:",err));
   },[]);
 
-  if(!DB) return (
-    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontFamily:"Poppins,sans-serif",background:"#1a1a2e",color:"#e0e0e0"}}>
-      <div style={{textAlign:"center"}}>
-        <div style={{fontSize:"2rem",marginBottom:"0.5rem"}}>Loading...</div>
-        <div style={{color:"#888"}}>Fetching lottery data</div>
-      </div>
-    </div>
-  );
-
-  const games=DB.games, asOf=DB.asOf;
-  // Debug: find any object values that would cause React error 310
-  games.forEach((g,i)=>{
-    Object.entries(g).forEach(([k,v])=>{
-      if(v!==null && typeof v==='object' && k!=='prize_levels') console.error(`Game ${i} (${g.game_name}) field "${k}" is object:`,v);
-    });
-  });
-  const prices=useMemo(()=>[...new Set(games.map(g=>g.ticket_price))].sort((a,b)=>a-b),[]);
+  const games=DB?.games||[];
+  const asOf=DB?.asOf||"";
+  const prices=useMemo(()=>[...new Set(games.map(g=>g.ticket_price))].sort((a,b)=>a-b),[games]);
 
   const filtered=useMemo(()=>{
     let list=[...games];
@@ -645,7 +631,16 @@ function AppInner(){
       return a.game_name.localeCompare(b.game_name);
     });
     return list;
-  },[search,priceF,verdictF,sortKey]);
+  },[games,search,priceF,verdictF,sortKey]);
+
+  if(!DB) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontFamily:"Poppins,sans-serif",background:"#1a1a2e",color:"#e0e0e0"}}>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontSize:"2rem",marginBottom:"0.5rem"}}>Loading...</div>
+        <div style={{color:"#888"}}>Fetching lottery data</div>
+      </div>
+    </div>
+  );
 
   const elites  = games.filter(g=>g.verdict==="elite"&&g.adj_prof_score!=null);
   const buys    = games.filter(g=>g.verdict==="strong_buy"&&g.adj_prof_score!=null);
