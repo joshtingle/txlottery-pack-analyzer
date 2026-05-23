@@ -638,6 +638,93 @@ def assign_verdicts(recs: list[dict]) -> None:
             rec["verdict"] = "marginal"
 
 
+# ── Phase 1: Velocity metrics (cross-snapshot comparison) ────────────────────
+
+def compute_velocity_metrics(db, recs: list[dict], all_levels_map: dict,
+                             snapshot_date: str) -> None:
+    """Enrich analysis records with velocity metrics by comparing to the prior snapshot."""
+    if db.mode == "sqlite":
+        prior_row = db.conn.execute(
+            "SELECT snapshot_date FROM games_analysis "
+            "WHERE snapshot_date < ? ORDER BY snapshot_date DESC LIMIT 1",
+            (snapshot_date,),
+        ).fetchone()
+    else:
+        cur = db.conn.cursor()
+        cur.execute(
+            "SELECT TOP 1 snapshot_date FROM games_analysis "
+            "WHERE snapshot_date < ? ORDER BY snapshot_date DESC",
+            (snapshot_date,),
+        )
+        prior_row = cur.fetchone()
+
+    if not prior_row:
+        for rec in recs:
+            rec.update(claim_velocity_base=None, claim_velocity_top=None,
+                       velocity_divergence=None, momentum=None,
+                       win_rate_velocity=None, days_since_prior=None)
+        return
+
+    prior_date = prior_row[0]
+    days_elapsed = (date.fromisoformat(snapshot_date) - date.fromisoformat(prior_date)).days
+    if days_elapsed <= 0:
+        days_elapsed = 1
+
+    _, prior_ga_rows = db.fetch_rows(
+        "SELECT game_number, composite_conc, win_rate_ratio "
+        "FROM games_analysis WHERE snapshot_date=?", (prior_date,))
+    prior_ga = {r[0]: {"composite_conc": r[1], "win_rate_ratio": r[2]}
+                for r in prior_ga_rows}
+
+    _, prior_pl_rows = db.fetch_rows(
+        "SELECT game_number, prize_amount, claimed, total_printed, is_meaningful "
+        "FROM prize_levels WHERE snapshot_date=?", (prior_date,))
+    prior_levels = defaultdict(dict)
+    for r in prior_pl_rows:
+        prior_levels[r[0]][r[1]] = {"claimed": r[2], "total_printed": r[3],
+                                    "is_meaningful": r[4]}
+
+    for rec in recs:
+        gnum = rec["game_number"]
+        rec["days_since_prior"] = days_elapsed
+
+        pa = prior_ga.get(gnum)
+        if pa and pa["composite_conc"] is not None and rec.get("composite_conc") is not None:
+            rec["momentum"] = round(rec["composite_conc"] - pa["composite_conc"], 6)
+        else:
+            rec["momentum"] = None
+
+        if pa and pa["win_rate_ratio"] is not None and rec.get("win_rate_ratio") is not None:
+            rec["win_rate_velocity"] = round(
+                (rec["win_rate_ratio"] - pa["win_rate_ratio"]) / days_elapsed, 6)
+        else:
+            rec["win_rate_velocity"] = None
+
+        prev_pl = prior_levels.get(gnum, {})
+        base_vels, top_vels = [], []
+
+        for lv in all_levels_map.get(gnum, []):
+            prev = prev_pl.get(lv["amount"])
+            if not prev or not lv.get("total") or lv["total"] <= 0:
+                lv["claim_velocity"] = None
+                continue
+            delta = (lv.get("claimed") or 0) - (prev.get("claimed") or 0)
+            vel = (delta / days_elapsed) / lv["total"]
+            lv["claim_velocity"] = round(vel, 8)
+
+            if lv.get("is_meaningful"):
+                top_vels.append(vel)
+            else:
+                base_vels.append(vel)
+
+        rec["claim_velocity_base"] = round(sum(base_vels) / len(base_vels), 8) if base_vels else None
+        rec["claim_velocity_top"] = round(sum(top_vels) / len(top_vels), 8) if top_vels else None
+        if rec["claim_velocity_base"] is not None and rec["claim_velocity_top"] is not None:
+            rec["velocity_divergence"] = round(rec["claim_velocity_base"] - rec["claim_velocity_top"], 8)
+        else:
+            rec["velocity_divergence"] = None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DATABASE LAYER
 # ══════════════════════════════════════════════════════════════════════════════
@@ -667,6 +754,7 @@ CREATE TABLE IF NOT EXISTS prize_levels (
     is_jackpot      INTEGER,
     is_meaningful   INTEGER,
     deviation       REAL,
+    claim_velocity  REAL,
     UNIQUE(game_number, snapshot_date, prize_amount)
 );
 CREATE TABLE IF NOT EXISTS games_analysis (
@@ -736,6 +824,12 @@ CREATE TABLE IF NOT EXISTS games_analysis (
     verdict                     TEXT,
     detail_url                  TEXT,
     computed_at                 TEXT,
+    claim_velocity_base         REAL,
+    claim_velocity_top          REAL,
+    velocity_divergence         REAL,
+    momentum                    REAL,
+    win_rate_velocity           REAL,
+    days_since_prior            INTEGER,
     UNIQUE(game_number, snapshot_date)
 );
 CREATE TABLE IF NOT EXISTS csv_raw (
@@ -782,6 +876,7 @@ _SQLSRV_DDL = [
         is_jackpot      INT,
         is_meaningful   INT,
         deviation       FLOAT,
+        claim_velocity  FLOAT,
         CONSTRAINT UQ_prize_levels UNIQUE (game_number, snapshot_date, prize_amount)
     )
     """,
@@ -854,6 +949,12 @@ _SQLSRV_DDL = [
         verdict                     NVARCHAR(30),
         detail_url                  NVARCHAR(500),
         computed_at                 NVARCHAR(60),
+        claim_velocity_base         FLOAT,
+        claim_velocity_top          FLOAT,
+        velocity_divergence         FLOAT,
+        momentum                    FLOAT,
+        win_rate_velocity           FLOAT,
+        days_since_prior            INT,
         CONSTRAINT UQ_games_analysis UNIQUE (game_number, snapshot_date)
     )
     """,
@@ -893,10 +994,14 @@ _SQLITE_MIGRATIONS = {
         ("prof_score","REAL"), ("adj_prof_score","REAL"),
         ("conc_mult","REAL"), ("jp_mult","REAL"), ("wr_mult","REAL"), ("evgw_mult","REAL"),
         ("verdict","TEXT"),
+        ("claim_velocity_base","REAL"), ("claim_velocity_top","REAL"),
+        ("velocity_divergence","REAL"), ("momentum","REAL"),
+        ("win_rate_velocity","REAL"), ("days_since_prior","INTEGER"),
     ],
     "prize_levels": [
         ("one_in","REAL"), ("tier","TEXT"), ("is_jackpot","INTEGER"),
         ("is_meaningful","INTEGER"), ("deviation","REAL"),
+        ("claim_velocity","REAL"),
     ],
 }
 
@@ -919,10 +1024,14 @@ _SQLSRV_MIGRATIONS = {
         ("prof_score","FLOAT"), ("adj_prof_score","FLOAT"),
         ("conc_mult","FLOAT"), ("jp_mult","FLOAT"), ("wr_mult","FLOAT"), ("evgw_mult","FLOAT"),
         ("verdict","NVARCHAR(30)"),
+        ("claim_velocity_base","FLOAT"), ("claim_velocity_top","FLOAT"),
+        ("velocity_divergence","FLOAT"), ("momentum","FLOAT"),
+        ("win_rate_velocity","FLOAT"), ("days_since_prior","INT"),
     ],
     "prize_levels": [
         ("one_in","FLOAT"), ("tier","NVARCHAR(20)"), ("is_jackpot","INT"),
         ("is_meaningful","INT"), ("deviation","FLOAT"),
+        ("claim_velocity","FLOAT"),
     ],
 }
 
@@ -1040,14 +1149,14 @@ class Database:
                 self.conn.execute(
                     "INSERT OR REPLACE INTO prize_levels "
                     "(game_number,snapshot_date,prize_amount,total_printed,claimed,remaining,"
-                    "retention_rate,one_in,tier,is_jackpot,is_meaningful,deviation) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "retention_rate,one_in,tier,is_jackpot,is_meaningful,deviation,claim_velocity) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     [game_number, snapshot_date, lv["amount"], lv["total"],
                      lv["claimed"], lv["remaining"], lv["retention_rate"],
                      lv.get("one_in"), lv.get("tier"),
                      int(lv.get("is_jackpot", False)),
                      int(lv.get("is_meaningful", False)),
-                     lv.get("deviation")],
+                     lv.get("deviation"), lv.get("claim_velocity")],
                 )
             self.conn.commit()
         else:
@@ -1061,11 +1170,13 @@ class Database:
                        AND t.prize_amount=s.prize_amount
                     WHEN MATCHED THEN UPDATE SET
                         total_printed=?,claimed=?,remaining=?,retention_rate=?,
-                        one_in=?,tier=?,is_jackpot=?,is_meaningful=?,deviation=?
+                        one_in=?,tier=?,is_jackpot=?,is_meaningful=?,deviation=?,
+                        claim_velocity=?
                     WHEN NOT MATCHED THEN INSERT
                         (game_number,snapshot_date,prize_amount,total_printed,claimed,
-                         remaining,retention_rate,one_in,tier,is_jackpot,is_meaningful,deviation)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?);
+                         remaining,retention_rate,one_in,tier,is_jackpot,is_meaningful,
+                         deviation,claim_velocity)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);
                 """, [
                     game_number, snapshot_date, lv["amount"],          # USING key
                     lv["total"], lv["claimed"], lv["remaining"],        # UPDATE
@@ -1073,14 +1184,14 @@ class Database:
                     lv.get("tier"),
                     int(lv.get("is_jackpot", False)),
                     int(lv.get("is_meaningful", False)),
-                    lv.get("deviation"),
+                    lv.get("deviation"), lv.get("claim_velocity"),
                     game_number, snapshot_date, lv["amount"],           # INSERT
                     lv["total"], lv["claimed"], lv["remaining"],
                     lv["retention_rate"], lv.get("one_in"),
                     lv.get("tier"),
                     int(lv.get("is_jackpot", False)),
                     int(lv.get("is_meaningful", False)),
-                    lv.get("deviation"),
+                    lv.get("deviation"), lv.get("claim_velocity"),
                 ])
             self.conn.commit()
 
@@ -1340,6 +1451,7 @@ def run_recompute(db: Database):
             all_levels_map[gnum] = enriched_levels
 
         assign_verdicts(all_recs)
+        compute_velocity_metrics(db, all_recs, all_levels_map, snap_date)
         for rec in all_recs:
             db.upsert_prize_levels(rec["game_number"], snap_date, all_levels_map[rec["game_number"]])
             db.upsert_analysis(rec)
@@ -1484,6 +1596,9 @@ def run(args):
 
     # ── 5. Assign percentile-based verdicts ───────────────────────────────────
     assign_verdicts(all_recs)
+
+    # ── 5b. Compute velocity metrics (cross-snapshot) ────────────────────────
+    compute_velocity_metrics(db, all_recs, all_levels_map, snapshot_date)
 
     # ── 6. Write to database ──────────────────────────────────────────────────
     for rec in all_recs:

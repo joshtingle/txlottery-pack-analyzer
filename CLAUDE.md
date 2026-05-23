@@ -167,7 +167,7 @@ the top of the file — there is no runtime API call.
 
 ### Key Design Decisions
 
-- Mobile-first, max-width 600px, Poppins font, dark gray theme
+- Responsive: single-column on mobile, 2-col tablet, 3-col desktop. Poppins font, dark gray theme
 - Detail view is a full-screen page (not a modal) to avoid mobile overflow issues
 - Score ring gauge normalizes against `DB.score_max` — never hardcode a max
 - The `actionable` check in `GameCard` must include `"elite"` — do not remove it
@@ -179,13 +179,9 @@ the top of the file — there is no runtime API call.
 
 ### Data Flow for Updates
 
-1. Run `tx_lottery_scraper.py` — produces `tx_lottery_latest.json`
-2. Open `tx-lottery-analyzer.jsx`
-3. Replace the `const DB = {...};` constant with contents of the new JSON
-4. Rebuild the artifact
-
-**Future goal:** Wire the dashboard to accept a JSON file drop so step 3–4 is
-automatic. This is on the roadmap.
+1. Run `tx_lottery_scraper.py` — writes to SQLite + SQL Server
+2. Dashboard fetches from API at `VITE_API_BASE_URL/api/latest` on load
+3. Push to `main` auto-deploys via GitHub Actions (API + UI workflows)
 
 ### Filters and Sort Options
 
@@ -195,7 +191,7 @@ The dashboard has three filter controls:
 - Price filter: All | $1 | $2 | $3 | $5 | $10 | $20 | $30 | $50 | $100
 - Sort: Composite Score | ROI | EV/Pack | Win Rate Drift | EV|Win Drift |
   Concentration | Guarantee Adequacy | Lowest Variance | Lowest Max Loss |
-  Best Floor | Most Mature | Ticket Price
+  Best Floor | Most Mature | Velocity Divergence | Momentum | Ticket Price
 
 ---
 
@@ -249,13 +245,26 @@ Uses only: `react`, `recharts` (not currently used but available),
 
 ## Roadmap (Priority Order)
 
-### Phase 1 — Needs 2+ daily snapshots
-- **Claim velocity by tier** — Δclaimed/day per tier, divergence between
-  top-tier (slow) and base-tier (fast) is the leading indicator of improving
-  concentration
-- **Momentum** — concentration_ratio trend over time, direction matters as
-  much as current level
-- **Win rate velocity** — is the pool enriching faster or slower each day?
+### Phase 1 — Velocity & Momentum ✅ SHIPPED
+- ~~**Claim velocity by tier**~~ — Δclaimed/day per tier, normalized by
+  total_printed. Divergence between base-tier (fast) and top-tier (slow) is
+  the leading indicator of improving concentration. Stored as
+  `claim_velocity_base`, `claim_velocity_top`, `velocity_divergence` in
+  `games_analysis`, plus per-tier `claim_velocity` in `prize_levels`.
+- ~~**Momentum**~~ — `composite_conc_today − composite_conc_prior`. Positive
+  means concentration is actively improving between snapshots.
+- ~~**Win rate velocity**~~ — `Δwin_rate_ratio / days_elapsed`. Positive means
+  the pool is enriching faster each day.
+- All three computed in `compute_velocity_metrics()` which runs after
+  `assign_verdicts()` in both `run()` and `run_recompute()`.
+
+### Phase 1b — Momentum scoring (needs 7+ daily snapshots)
+- **Momentum as a score multiplier** — once velocity data is smoothed over a
+  7-day window, add `sigmoid_mult(momentum, k=TBD, max_boost=±0.10)` to the
+  `adj_prof_score` formula. Games actively concentrating get a nudge; games
+  diluting get dinged. Keep the boost modest since velocity is noisier than
+  snapshot-level metrics. Do NOT implement until 7+ snapshots exist — 1-day
+  deltas are too noisy to be load-bearing in ranking.
 
 ### Phase 2 — Needs systematic detail page scraping
 - **Time-adjusted pack value** — urgency premium for games closing soon
@@ -272,7 +281,7 @@ Uses only: `react`, `recharts` (not currently used but available),
 - **Second-chance drawing value** — currently ignored, adds EV for some games
 
 ### Dashboard improvements (no data dependency)
-- JSON file drop for data refresh (eliminate manual DB constant replacement)
+- ~~JSON file drop for data refresh~~ — superseded by API-backed dashboard
 - Per-game historical chart (requires multiple snapshots in DB)
 - Export to CSV / share sheet
 

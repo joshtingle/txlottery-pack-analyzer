@@ -84,6 +84,7 @@ def build_snapshot(conn, snapshot_date: str) -> dict:
             "is_meaningful":bool(d.get("is_meaningful")),
             "is_jackpot":   bool(d.get("is_jackpot")),
             "deviation":    d.get("deviation"),
+            "claim_velocity":d.get("claim_velocity"),
         })
 
     score_max = None

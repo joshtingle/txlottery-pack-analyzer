@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, Component } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, Component } from "react";
 
 const fmt    = (n,d=0) => n==null||isNaN(n)?"—":Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const pct    = (n,d=1) => n!=null&&!isNaN(n)?(Number(n)*100).toFixed(d)+"%":"—";
@@ -49,6 +49,9 @@ function entropyLabel(d){
   if(d<0.01)  return "Stable";
   return "Spreading";
 }
+function momentumColor(m){ return m==null?C.dim:m>0.005?C.green:m>-0.005?C.sub:m>-0.02?C.amber:C.red; }
+function momentumLabel(m){ return m==null?"—":m>0.01?"Concentrating fast":m>0.005?"Concentrating":m>-0.005?"Stable":m>-0.01?"Diluting":"Diluting fast"; }
+function velDivColor(v){ return v==null?C.dim:v>0.0005?C.green:v>-0.0005?C.sub:C.red; }
 
 function Bar({v=0,color,h=5}){
   return(
@@ -57,8 +60,40 @@ function Bar({v=0,color,h=5}){
     </div>
   );
 }
-function Tag({label,color,bg}){
-  return <span style={{fontSize:".6rem",fontWeight:600,padding:"2px 8px",borderRadius:4,color,background:bg,whiteSpace:"nowrap"}}>{label}</span>;
+function Tip({text,children}){
+  const [open,setOpen]=useState(false);
+  const ref=useRef(null);
+  const close=useCallback(e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false)},[]);
+  useEffect(()=>{if(open){document.addEventListener("pointerdown",close);return()=>document.removeEventListener("pointerdown",close)}},[open,close]);
+  if(!text) return children||null;
+  return(
+    <span ref={ref} style={{position:"relative",display:"inline-flex",alignItems:"center"}}
+      onMouseEnter={()=>setOpen(true)} onMouseLeave={()=>setOpen(false)}>
+      {children}
+      <span className="tip-btn" onClick={e=>{e.stopPropagation();setOpen(o=>!o)}}
+        style={{marginLeft:4,fontSize:".55rem",width:14,height:14,borderRadius:7,
+          alignItems:"center",justifyContent:"center",
+          background:open?C.b2:C.s3,color:C.dim,cursor:"pointer",flexShrink:0,
+          border:`1px solid ${C.b1}`,transition:"background .15s"}}>?</span>
+      {open&&(
+        <span style={{position:"absolute",bottom:"calc(100% + 8px)",left:"50%",transform:"translateX(-50%)",
+          background:C.s4,color:C.text,fontSize:".65rem",lineHeight:1.45,padding:"8px 12px",
+          borderRadius:8,border:`1px solid ${C.b2}`,boxShadow:"0 4px 20px rgba(0,0,0,.45)",
+          width:"max-content",maxWidth:260,zIndex:50,pointerEvents:"none",
+          animation:"tipIn .15s ease-out"}}>
+          {text}
+          <span style={{position:"absolute",top:"100%",left:"50%",transform:"translateX(-50%)",
+            width:0,height:0,borderLeft:"6px solid transparent",borderRight:"6px solid transparent",
+            borderTop:`6px solid ${C.b2}`}}/>
+        </span>
+      )}
+    </span>
+  );
+}
+function Tag({label,color,bg,tip}){
+  const inner=<span style={{fontSize:".6rem",fontWeight:600,padding:"2px 8px",borderRadius:4,color,background:bg,whiteSpace:"nowrap"}}>{label}</span>;
+  if(!tip) return inner;
+  return <Tip text={tip}>{inner}</Tip>;
 }
 function ScoreRing({score,scoreMax}){
   const max=scoreMax||0.42;
@@ -85,10 +120,12 @@ function SectionHeader({label,sub}){
     </div>
   );
 }
-function Tile({label,val,sub,color=C.text,accent}){
+function Tile({label,val,sub,color=C.text,accent,tip}){
   return(
     <div style={{background:C.s2,border:`1px solid ${accent||C.b1}`,borderRadius:10,padding:"10px 12px"}}>
-      <div style={{fontSize:".58rem",color:C.dim,marginBottom:4}}>{label}</div>
+      <div style={{fontSize:".58rem",color:C.dim,marginBottom:4}}>
+        {tip?<Tip text={tip}><span>{label}</span></Tip>:label}
+      </div>
       <div style={{fontSize:"1rem",fontWeight:700,color,lineHeight:1}}>{val}</div>
       {sub&&<div style={{fontSize:".58rem",color:C.dim,marginTop:4,lineHeight:1.4}}>{sub}</div>}
     </div>
@@ -178,28 +215,40 @@ function GameCard({g,rank,onClick,scoreMax}){
           {/* Primary 3 */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7,marginBottom:10}}>
             {[
-              {label:"ROI on Risk",  val:pct(g.roi_on_max_loss,0),   color:rc},
-              {label:"Max Loss",     val:dollar(g.max_loss_per_pack), color:C.red},
-              {label:"EV / Pack",    val:dollar(g.ev_per_pack),       color:C.green},
-            ].map(({label,val,color})=>(
+              {label:"ROI on Risk",  val:pct(g.roi_on_max_loss,0),   color:rc,
+               tip:"Expected return above guarantee as % of max possible loss per pack"},
+              {label:"Max Loss",     val:dollar(g.max_loss_per_pack), color:C.red,
+               tip:"Worst-case loss per pack: pack cost minus guarantee"},
+              {label:"EV / Pack",    val:dollar(g.ev_per_pack),       color:C.green,
+               tip:"Expected dollar value of remaining prizes in one pack"},
+            ].map(({label,val,color,tip})=>(
               <div key={label} style={{background:C.s3,borderRadius:8,padding:"8px 9px"}}>
-                <div style={{fontSize:".55rem",color:C.dim,marginBottom:2}}>{label}</div>
+                <div style={{fontSize:".55rem",color:C.dim,marginBottom:2}}>
+                  <Tip text={tip}><span>{label}</span></Tip>
+                </div>
                 <div style={{fontSize:".9rem",fontWeight:700,color}}>{val}</div>
               </div>
             ))}
           </div>
 
           {/* Signal row */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7,marginBottom:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:7,marginBottom:10}}>
             {[
-              {label:"Win Rate",  val:x1(g.win_rate_ratio),     color:wrc,  tip:"vs launch"},
-              {label:"EV if Win", val:x1(g.ev_given_win_ratio), color:evgwc,tip:"vs launch"},
-              {label:"Conc.",     val:g.n_meaningful_tiers>0?x1(g.composite_conc):"N/A", color:cc, tip:"vs launch"},
-            ].map(({label,val,color,tip})=>(
+              {label:"Win Rate",  val:x1(g.win_rate_ratio),     color:wrc,  sub:"vs launch",
+               tip:"Current win rate vs launch. >1.0× means more winners per remaining ticket"},
+              {label:"EV if Win", val:x1(g.ev_given_win_ratio), color:evgwc,sub:"vs launch",
+               tip:"Average winning ticket value vs launch. >1.0× means bigger prizes remain"},
+              {label:"Conc.",     val:g.n_meaningful_tiers>0?x1(g.composite_conc):"N/A", color:cc, sub:"vs launch",
+               tip:"Scarcity-weighted concentration of rare prizes. >1.0× means rare prizes are retaining better than average"},
+              {label:"Velocity",  val:g.velocity_divergence!=null?signed(g.velocity_divergence):"—", color:velDivColor(g.velocity_divergence), sub:"base−top",
+               tip:"Claim rate gap between common and rare tiers. Positive means common prizes draining faster — concentration is actively improving"},
+            ].map(({label,val,color,sub,tip})=>(
               <div key={label} style={{background:C.s3,borderRadius:8,padding:"8px 9px"}}>
-                <div style={{fontSize:".55rem",color:C.dim,marginBottom:2}}>{label}</div>
+                <div style={{fontSize:".55rem",color:C.dim,marginBottom:2}}>
+                  <Tip text={tip}><span>{label}</span></Tip>
+                </div>
                 <div style={{fontSize:".9rem",fontWeight:700,color}}>{val}</div>
-                <div style={{fontSize:".52rem",color:C.dim}}>{tip}</div>
+                <div style={{fontSize:".52rem",color:C.dim}}>{sub}</div>
               </div>
             ))}
           </div>
@@ -207,7 +256,12 @@ function GameCard({g,rank,onClick,scoreMax}){
           {/* Scenario bar */}
           {g.scenario_p10!=null&&(
             <div style={{background:C.s3,borderRadius:8,padding:"9px 11px",marginBottom:10}}>
-              <div style={{fontSize:".58rem",color:C.sub,marginBottom:7}}>Pack return scenarios · floor: {dollar(g.guarantee_per_pack)}</div>
+              <div style={{fontSize:".58rem",color:C.sub,marginBottom:7}}>
+                <Tip text="20,000 simulated pack draws. Light band = P10–P90 range, dark band = P25–P75, blue line = median, amber line = guarantee floor">
+                  <span>Pack return scenarios</span>
+                </Tip>
+                {" · floor: "}{dollar(g.guarantee_per_pack)}
+              </div>
               <div style={{position:"relative",height:16,borderRadius:3,overflow:"hidden",background:C.s2}}>
                 {[
                   {l:g.scenario_p10,r:g.scenario_p90,color:"rgba(91,141,238,.2)"},
@@ -223,9 +277,9 @@ function GameCard({g,rank,onClick,scoreMax}){
                   left:(g.guarantee_per_pack/(g.scenario_p90*1.05)*100)+"%"}}/>
               </div>
               <div style={{display:"flex",justifyContent:"space-between",marginTop:5,fontSize:".56rem",color:C.dim}}>
-                <span>P10: {dollar(g.scenario_p10)}</span>
-                <span style={{color:C.blue}}>P50: {dollar(g.scenario_p50)}</span>
-                <span>P90: {dollar(g.scenario_p90)}</span>
+                <Tip text="Worst 10% of simulated packs returned this or less"><span>P10: {dollar(g.scenario_p10)}</span></Tip>
+                <Tip text="Median — half of simulated packs returned more, half less"><span style={{color:C.blue}}>P50: {dollar(g.scenario_p50)}</span></Tip>
+                <Tip text="Best 10% of simulated packs returned this or more"><span>P90: {dollar(g.scenario_p90)}</span></Tip>
               </div>
             </div>
           )}
@@ -233,12 +287,16 @@ function GameCard({g,rank,onClick,scoreMax}){
           {/* Confidence strips */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
             {[
-              {label:"Maturity confidence",v:g.maturity_confidence||0,color:C.blue},
-              {label:"Floor protection",   v:g.downside_protection||0, color:C.amber},
-            ].map(({label,v,color})=>(
+              {label:"Maturity confidence",v:g.maturity_confidence||0,color:C.blue,
+               tip:"How reliable the analysis is based on sell-through. Peaks around 65% sold — too new or nearly exhausted = low confidence"},
+              {label:"Floor protection",   v:g.downside_protection||0, color:C.amber,
+               tip:"Guarantee as a fraction of pack cost. Higher = less money at risk per pack"},
+            ].map(({label,v,color,tip})=>(
               <div key={label}>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
-                  <span style={{fontSize:".55rem",color:C.dim}}>{label}</span>
+                  <span style={{fontSize:".55rem",color:C.dim}}>
+                    <Tip text={tip}><span>{label}</span></Tip>
+                  </span>
                   <span style={{fontSize:".55rem",color:C.sub}}>{pct(v,0)}</span>
                 </div>
                 <Bar v={v} color={color} h={4}/>
@@ -247,14 +305,22 @@ function GameCard({g,rank,onClick,scoreMax}){
           </div>
 
           <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-            <Tag label={`Guar. ${dollar(g.guarantee_per_pack)}`} color={C.amber} bg={C.amberBg}/>
-            {g.jp_remaining===0&&<Tag label="Jackpot Gone" color={C.red} bg={C.redBg}/>}
+            <Tag label={`Guar. ${dollar(g.guarantee_per_pack)}`} color={C.amber} bg={C.amberBg}
+              tip="Minimum guaranteed payout per pack — your loss floor"/>
+            {g.jp_remaining===0&&<Tag label="Jackpot Gone" color={C.red} bg={C.redBg}
+              tip="All jackpot prizes have been claimed"/>}
             {g.jp_remaining>0&&(g.jp_conc_ratio||0)>=1.02&&
-              <Tag label={`JP ↑${x1(g.jp_conc_ratio)}`} color={C.green} bg={C.greenBg}/>}
+              <Tag label={`JP ↑${x1(g.jp_conc_ratio)}`} color={C.green} bg={C.greenBg}
+                tip="Jackpot is retaining better than average — your odds of hitting it are improving relative to launch"/>}
             {(g.win_rate_ratio||0)>=1.0&&
-              <Tag label="Win Rate ↑" color={C.teal} bg={C.tealBg}/>}
+              <Tag label="Win Rate ↑" color={C.teal} bg={C.tealBg}
+                tip="More winners per remaining ticket than at launch"/>}
             {(g.ev_given_win_ratio||0)>=1.0&&
-              <Tag label="EV|Win ↑" color={C.purple} bg={C.purpleBg}/>}
+              <Tag label="EV|Win ↑" color={C.purple} bg={C.purpleBg}
+                tip="Average winning ticket is worth more than at launch"/>}
+            {g.momentum!=null&&g.momentum>0.005&&
+              <Tag label="Momentum ↑" color={C.teal} bg={C.tealBg}
+                tip="Concentration is actively increasing compared to the prior snapshot"/>}
           </div>
         </>
       )}
@@ -325,29 +391,72 @@ function Detail({g,onClose,scoreMax}){
         {/* Pool quality */}
         <SectionHeader label="Pool Quality Signals" sub="How the remaining prize pool has evolved since launch"/>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-          <Tile label="Win Rate Now"      val={pct(g.current_win_rate,2)}        sub={`Was ${pct(g.launch_win_rate,2)} at launch`} color={wrc} accent={wrc+"33"}/>
-          <Tile label="Win Rate Drift"    val={x2(g.win_rate_ratio)}             sub={g.win_rate_ratio>=1?"More winners/ticket":"Fewer winners/ticket"} color={wrc} accent={wrc+"33"}/>
-          <Tile label="Avg Win Now"       val={dollar(g.ev_given_win_current)}   sub={`Was ${dollar(g.ev_given_win_launch)} at launch`} color={evgwc} accent={evgwc+"33"}/>
-          <Tile label="EV|Win Drift"      val={x2(g.ev_given_win_ratio)}         sub={g.ev_given_win_ratio>=1?"Pool enriching":"Pool shrinking"} color={evgwc} accent={evgwc+"33"}/>
+          <Tile label="Win Rate Now"      val={pct(g.current_win_rate,2)}        sub={`Was ${pct(g.launch_win_rate,2)} at launch`} color={wrc} accent={wrc+"33"}
+            tip="Percentage of remaining tickets that are winners"/>
+          <Tile label="Win Rate Drift"    val={x2(g.win_rate_ratio)}             sub={g.win_rate_ratio>=1?"More winners/ticket":"Fewer winners/ticket"} color={wrc} accent={wrc+"33"}
+            tip="Current win rate divided by launch win rate. >1.0× means more winners per remaining ticket than at launch"/>
+          <Tile label="Avg Win Now"       val={dollar(g.ev_given_win_current)}   sub={`Was ${dollar(g.ev_given_win_launch)} at launch`} color={evgwc} accent={evgwc+"33"}
+            tip="Average dollar value of a winning ticket right now"/>
+          <Tile label="EV|Win Drift"      val={x2(g.ev_given_win_ratio)}         sub={g.ev_given_win_ratio>=1?"Pool enriching":"Pool shrinking"} color={evgwc} accent={evgwc+"33"}
+            tip="Current avg win value divided by launch value. >1.0× means remaining wins are worth more on average"/>
         </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
-          <Tile label="Entropy Δ"         val={signed(g.entropy_delta)}          sub={entropyLabel(g.entropy_delta)} color={g.entropy_delta<-0.01?C.green:g.entropy_delta>0.01?C.amber:C.sub}/>
-          <Tile label="Expected Winners"  val={`${g.expected_winners_current?.toFixed(1)||"—"}/pack`} sub={`Was ${g.expected_winners_launch?.toFixed(1)||"—"} at launch`}/>
+          <Tile label="Entropy Δ"         val={signed(g.entropy_delta)}          sub={entropyLabel(g.entropy_delta)} color={g.entropy_delta<-0.01?C.green:g.entropy_delta>0.01?C.amber:C.sub}
+            tip="Change in prize distribution entropy. Negative means prizes are concentrating into fewer tiers"/>
+          <Tile label="Expected Winners"  val={`${g.expected_winners_current?.toFixed(1)||"—"}/pack`} sub={`Was ${g.expected_winners_launch?.toFixed(1)||"—"} at launch`}
+            tip="How many winning tickets you'd expect in a single pack based on current odds"/>
         </div>
+
+        {/* Velocity & Momentum */}
+        {g.days_since_prior!=null&&(
+          <>
+            <SectionHeader label="Velocity & Momentum" sub={`Comparing to ${g.days_since_prior}-day prior snapshot`}/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <Tile label="Momentum" val={signed(g.momentum)} sub={momentumLabel(g.momentum)}
+                color={momentumColor(g.momentum)} accent={momentumColor(g.momentum)+"33"}
+                tip="Change in composite concentration since prior snapshot. Positive means concentration is actively improving"/>
+              <Tile label="Win Rate Velocity" val={g.win_rate_velocity!=null?`${signed(g.win_rate_velocity)}/day`:"—"}
+                sub={g.win_rate_velocity>0?"Pool enriching faster":"Pool enriching slower"}
+                color={g.win_rate_velocity>0?C.green:g.win_rate_velocity<0?C.amber:C.sub}
+                tip="Daily change in win rate ratio. Positive means each remaining ticket is becoming more likely to win"/>
+              <Tile label="Base Tier Velocity" val={g.claim_velocity_base!=null?pct(g.claim_velocity_base,3):"—"}
+                sub="Common tiers drain rate/day"
+                tip="Average daily claim rate across common/uncommon prize tiers, as a fraction of total printed"/>
+              <Tile label="Top Tier Velocity" val={g.claim_velocity_top!=null?pct(g.claim_velocity_top,3):"—"}
+                sub="Scarce+ tiers drain rate/day"
+                tip="Average daily claim rate across scarce, rare, and ultra-rare tiers. Lower than base = concentration improving"/>
+            </div>
+            <div style={{marginBottom:20}}>
+              <Tile label="Velocity Divergence" val={g.velocity_divergence!=null?signed(g.velocity_divergence):"—"}
+                sub={g.velocity_divergence>0?"Base draining faster than top — concentration improving"
+                  :g.velocity_divergence<0?"Top draining faster — concentration eroding":"Even drain rates"}
+                color={velDivColor(g.velocity_divergence)} accent={velDivColor(g.velocity_divergence)+"33"}
+                tip="Gap between base and top tier drain rates. Positive means common prizes are being claimed faster than rare ones — the pool is concentrating"/>
+            </div>
+          </>
+        )}
 
         {/* Pack analytics */}
         {g.pack_cost&&(
           <>
             <SectionHeader label="Pack Analytics"/>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-              <Tile label="Pack Size"    val={`${g.pack_size} tickets`} sub={`${dollar(g.ticket_price)} each`}/>
-              <Tile label="Pack Cost"   val={dollar(g.pack_cost)}/>
-              <Tile label="Guarantee"  val={dollar(g.guarantee_per_pack)} sub="Minimum return" color={C.amber} accent={C.amber+"44"}/>
-              <Tile label="Max Loss"   val={dollar(g.max_loss_per_pack)}  sub="True risk" color={C.red} accent={C.red+"44"}/>
-              <Tile label="EV Anchor"  val={pct(g.sell_through,1)} sub={`${dollar(g.prize_levels?.[0]?.amount)} tier sell-thru`} color={C.blue}/>
-              <Tile label="EV / Pack"  val={dollar(g.ev_per_pack)} color={g.ev_per_pack>g.guarantee_per_pack?C.green:C.amber}/>
-              <Tile label="Above Guarantee" val={dollar(g.expected_above_guarantee)} color={g.expected_above_guarantee>0?C.green:C.red} accent={g.expected_above_guarantee>0?C.green+"33":C.red+"33"}/>
-              <Tile label="ROI on Max Loss" val={pct(g.roi_on_max_loss,0)} color={rc} accent={rc+"33"}/>
+              <Tile label="Pack Size"    val={`${g.pack_size} tickets`} sub={`${dollar(g.ticket_price)} each`}
+                tip="Number of consecutive tickets in a pack"/>
+              <Tile label="Pack Cost"   val={dollar(g.pack_cost)}
+                tip="Total cost to buy one full pack"/>
+              <Tile label="Guarantee"  val={dollar(g.guarantee_per_pack)} sub="Minimum return" color={C.amber} accent={C.amber+"44"}
+                tip="Minimum guaranteed payout per pack — your loss floor"/>
+              <Tile label="Max Loss"   val={dollar(g.max_loss_per_pack)}  sub="True risk" color={C.red} accent={C.red+"44"}
+                tip="Pack cost minus guarantee — the most you can actually lose"/>
+              <Tile label="EV Anchor"  val={pct(g.sell_through,1)} sub={`${dollar(g.prize_levels?.[0]?.amount)} tier sell-thru`} color={C.blue}
+                tip="Estimated % of tickets sold, based on the smallest prize tier's claim rate"/>
+              <Tile label="EV / Pack"  val={dollar(g.ev_per_pack)} color={g.ev_per_pack>g.guarantee_per_pack?C.green:C.amber}
+                tip="Expected value of remaining prizes across one pack of tickets"/>
+              <Tile label="Above Guarantee" val={dollar(g.expected_above_guarantee)} color={g.expected_above_guarantee>0?C.green:C.red} accent={g.expected_above_guarantee>0?C.green+"33":C.red+"33"}
+                tip="How much EV per pack exceeds the guarantee floor"/>
+              <Tile label="ROI on Max Loss" val={pct(g.roi_on_max_loss,0)} color={rc} accent={rc+"33"}
+                tip="Above-guarantee value as a percentage of max loss — your risk-adjusted return"/>
             </div>
           </>
         )}
@@ -389,14 +498,18 @@ function Detail({g,onClose,scoreMax}){
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,borderTop:`1px solid ${C.b1}`,paddingTop:10}}>
                 <div>
-                  <div style={{fontSize:".58rem",color:C.dim,marginBottom:3}}>Guarantee adequacy</div>
+                  <div style={{fontSize:".58rem",color:C.dim,marginBottom:3}}>
+                    <Tip text="Guarantee ÷ worst-case simulated return (P10). Above 1.5× means the floor catches most bad outcomes"><span>Guarantee adequacy</span></Tip>
+                  </div>
                   <div style={{fontSize:".9rem",fontWeight:700,color:g.guarantee_adequacy>=2?C.green:g.guarantee_adequacy>=1.5?C.amber:C.sub}}>
                     {x1(g.guarantee_adequacy)}
                   </div>
                   <div style={{fontSize:".55rem",color:C.dim,marginTop:2}}>Guarantee vs P10 — above 1.5× is strong</div>
                 </div>
                 <div>
-                  <div style={{fontSize:".58rem",color:C.dim,marginBottom:3}}>Variance (P90/P10)</div>
+                  <div style={{fontSize:".58rem",color:C.dim,marginBottom:3}}>
+                    <Tip text="Spread between best and worst simulated outcomes. Lower = more predictable returns"><span>Variance (P90/P10)</span></Tip>
+                  </div>
                   <div style={{fontSize:".9rem",fontWeight:700,color:g.variance_score<=3?C.green:g.variance_score<=5?C.amber:C.sub}}>
                     {x1(g.variance_score)}
                   </div>
@@ -461,12 +574,13 @@ function Detail({g,onClose,scoreMax}){
                     <div style={{fontSize:".55rem",color:C.dim}}>vs overall</div>
                   </div>
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:4}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",gap:4}}>
                   {[
                     {label:"Printed",   val:fmt(pl.total)},
                     {label:"Remaining", val:fmt(pl.remaining)},
                     {label:"Retention", val:pct(pl.retention)},
                     {label:"1-in",      val:pl.one_in>0?fmt(pl.one_in):"—"},
+                    {label:"Vel/day",   val:pl.claim_velocity!=null?pct(pl.claim_velocity,3):"—"},
                   ].map(({label,val})=>(
                     <div key={label}>
                       <div style={{fontSize:".52rem",color:C.dim}}>{label}</div>
@@ -484,18 +598,172 @@ function Detail({g,onClose,scoreMax}){
   );
 }
 
+// ── Guide ────────────────────────────────────────────────────────────────────
+const GUIDE_SECTIONS = [
+  {
+    title:"How This Works",
+    color:C.blue,
+    entries:[
+      {term:"The Core Idea",
+       def:"Texas Lottery scratch-off packs come with a guaranteed minimum payout. This transforms a pure gamble into a bounded-loss proposition. We track every game's remaining prize pool daily and compute which packs offer the best risk-adjusted expected value above that guarantee floor."},
+      {term:"Sell-Through Estimation",
+       def:"We estimate how many tickets have been sold using the smallest prize tier's claim rate — small prizes get cashed almost immediately, so their claim rate is the best proxy for actual tickets sold. This is more accurate than using overall maturity, which over-counts remaining tickets when big prizes have already been hit."},
+    ],
+  },
+  {
+    title:"Card Metrics",
+    color:C.green,
+    entries:[
+      {term:"ROI on Risk",
+       def:"Expected return above the guarantee, expressed as a percentage of your maximum possible loss (pack cost minus guarantee). A 60% ROI means for every dollar you could lose, you expect to get back $0.60 in EV above the floor."},
+      {term:"Max Loss",
+       def:"The most you can actually lose on one pack: pack cost minus the guaranteed payout. This is your true risk — not the pack price."},
+      {term:"EV / Pack",
+       def:"The expected dollar value of remaining prizes across one pack of tickets. Calculated from the current remaining prize pool divided by estimated remaining tickets, multiplied by pack size."},
+      {term:"Win Rate",
+       def:"Current win rate divided by launch win rate. Above 1.0× means there are more winners per remaining ticket than when the game launched — the pool is enriching."},
+      {term:"EV if Win",
+       def:"Average value of a winning ticket now vs at launch. Above 1.0× means the remaining wins are worth more on average — larger prizes are retaining disproportionately."},
+      {term:"Concentration",
+       def:"Scarcity-weighted measure of how well rare prizes are retaining compared to the overall pool. Ultra-rare prizes get ~16× the weight of scarce prizes. Above 1.0× means rare prizes are still in the pool at a higher rate than average — the pool is concentrated toward bigger wins."},
+      {term:"Velocity",
+       def:"The gap between base-tier and top-tier claim rates per day. Positive means common prizes are being claimed faster than rare ones — concentration is actively improving right now, not just high from a past state."},
+    ],
+  },
+  {
+    title:"Scenario Bar",
+    color:C.blue,
+    entries:[
+      {term:"How It's Built",
+       def:"We simulate 20,000 pack purchases using the current prize pool odds. Each simulation randomly draws prizes at current probabilities to produce a total pack return. The distribution of those 20,000 outcomes gives us the percentile bands."},
+      {term:"P10 / P50 / P90",
+       def:"P10 is the 10th percentile — only 10% of simulated packs returned less than this. P50 is the median outcome. P90 is the 90th percentile — only 10% returned more. The light band spans P10–P90; the dark band spans P25–P75."},
+      {term:"Blue Line (Median)",
+       def:"The vertical blue line marks the median (P50) pack return — your most likely outcome."},
+      {term:"Amber Line (Guarantee)",
+       def:"The amber line marks the guaranteed minimum payout. When it sits well below P10, the guarantee is genuinely protective — even bad luck beats the floor."},
+    ],
+  },
+  {
+    title:"Confidence Indicators",
+    color:C.amber,
+    entries:[
+      {term:"Maturity Confidence",
+       def:"How much we trust the analysis based on sell-through rate. Uses a bell curve that peaks around 65% sold. Too new (<10% sold) means insufficient data; nearly exhausted (>92%) means the pool is depleted and scores are unreliable."},
+      {term:"Floor Protection",
+       def:"Guarantee as a fraction of pack cost. A $100 pack with an $85 guarantee has 85% floor protection — you can only lose $15. Higher protection means less capital at risk."},
+    ],
+  },
+  {
+    title:"Tags",
+    color:C.green,
+    entries:[
+      {term:"Guar. $XXX",
+       def:"The minimum guaranteed payout for one pack. This is your loss floor — the worst possible outcome."},
+      {term:"JP ↑X.XX×",
+       def:"The jackpot is retaining better than average. The number shows how concentrated jackpot odds are relative to launch — above 1.0× means your per-ticket jackpot odds have improved."},
+      {term:"Win Rate ↑",
+       def:"Current win rate exceeds launch win rate — more winners per remaining ticket than when the game started."},
+      {term:"EV|Win ↑",
+       def:"Average winning ticket value exceeds launch — remaining wins are worth more on average."},
+      {term:"Momentum ↑",
+       def:"Concentration is actively increasing compared to the prior daily snapshot. The pool is getting better, not just good."},
+      {term:"Jackpot Gone",
+       def:"All jackpot prizes have been claimed. The game may still have strong EV from mid-tier prizes but the top-end upside is gone."},
+    ],
+  },
+  {
+    title:"Velocity & Momentum (Detail View)",
+    color:C.teal,
+    entries:[
+      {term:"Momentum",
+       def:"The raw change in composite concentration between daily snapshots. Positive means concentration improved since yesterday. This answers: is the game getting better or worse right now?"},
+      {term:"Win Rate Velocity",
+       def:"How fast the win-rate ratio is changing per day. Positive means each remaining ticket is becoming more likely to be a winner at an accelerating rate."},
+      {term:"Base Tier Velocity",
+       def:"Average daily claim rate across common and uncommon prize tiers, normalized by total printed. This is how fast the everyday prizes are being claimed."},
+      {term:"Top Tier Velocity",
+       def:"Average daily claim rate across scarce, rare, and ultra-rare tiers. When this is lower than base tier velocity, it means rare prizes are being claimed more slowly — the pool is concentrating."},
+      {term:"Velocity Divergence",
+       def:"Base velocity minus top velocity. Positive = common prizes draining faster than rare ones = concentration is actively improving. This is the headline velocity signal shown on the card."},
+    ],
+  },
+  {
+    title:"Scoring System",
+    color:C.gold,
+    entries:[
+      {term:"Composite Score",
+       def:"The final ranking metric (adj_prof_score). Starts with a base score of ROI × maturity confidence × floor protection, then applies four sigmoid multipliers for concentration, jackpot concentration, win rate drift, and EV|win drift. Each multiplier is anchored to 1.0× at neutral — no signal produces no adjustment."},
+      {term:"Verdict Tiers",
+       def:"Percentile-based labels recalibrated each run. Elite = top 5%, Strong Buy = top 18%, Consider = top 45%, Marginal = positive EV below top 45%, Avoid = EV at or below guarantee. These shift as the game universe changes — a game can move from Strong Buy to Consider without any change to its own metrics if the overall field improved."},
+      {term:"Score Ring",
+       def:"The circular gauge on each card. Normalized against the highest-scoring game in the current dataset (score_max), so #1 always reads 100 and relative positions are meaningful across the full range."},
+    ],
+  },
+  {
+    title:"Prize Table (Detail View)",
+    color:C.purple,
+    entries:[
+      {term:"Tier Labels",
+       def:"Prizes classified by scarcity: common (<1 in 500), uncommon (1 in 500+), scarce (1 in 5,000+), rare (1 in 50,000+), ultra-rare (1 in 500,000+). Only scarce and above are 'meaningful' for concentration analysis."},
+      {term:"Deviation (pp)",
+       def:"This tier's retention rate minus the game's overall retention rate, in percentage points. Positive means this tier is retaining better than average — prizes at this level are being claimed more slowly than the norm."},
+      {term:"Retention",
+       def:"Percentage of originally printed prizes still remaining (unclaimed). High retention on rare tiers = good; high retention on common tiers = not yet mature."},
+      {term:"Vel/day",
+       def:"Per-tier daily claim velocity: tickets claimed per day divided by total printed. Shows how fast each prize level is draining. Compare across tiers to see the concentration dynamic in action."},
+      {term:"EV Anchor",
+       def:"The smallest prize tier, marked in blue. Its claim rate is used to estimate sell-through because small prizes are cashed almost immediately after purchase."},
+    ],
+  },
+];
+function Guide(){
+  const [open,setOpen]=useState({});
+  return(
+    <div style={{padding:"14px 16px 48px",maxWidth:700,margin:"0 auto"}}>
+      <div style={{marginBottom:16}}>
+        <div style={{fontSize:"1rem",fontWeight:700,color:C.text,marginBottom:4}}>Metric Guide</div>
+        <div style={{fontSize:".68rem",color:C.dim,lineHeight:1.6}}>What every number, chart, and indicator means — tap any section to expand.</div>
+      </div>
+      {GUIDE_SECTIONS.map((sec,si)=>(
+        <div key={si} style={{marginBottom:14}}>
+          <button onClick={()=>setOpen(o=>({...o,[si]:!o[si]}))}
+            style={{width:"100%",textAlign:"left",background:C.s1,border:`1px solid ${C.b1}`,
+              borderRadius:10,padding:"12px 14px",cursor:"pointer",display:"flex",
+              justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <div style={{width:4,height:20,borderRadius:2,background:sec.color}}/>
+              <span style={{fontSize:".82rem",fontWeight:600,color:C.text}}>{sec.title}</span>
+              <span style={{fontSize:".6rem",color:C.dim}}>({sec.entries.length})</span>
+            </div>
+            <span style={{color:C.dim,fontSize:".8rem",transition:"transform .2s",
+              transform:open[si]?"rotate(180deg)":"rotate(0)"}}>{"▾"}</span>
+          </button>
+          {open[si]&&(
+            <div style={{background:C.s1,border:`1px solid ${C.b1}`,borderTop:"none",
+              borderRadius:"0 0 10px 10px",padding:"6px 14px 10px"}}>
+              {sec.entries.map((e,ei)=>(
+                <div key={ei} style={{padding:"10px 0",borderBottom:ei<sec.entries.length-1?`1px solid ${C.b1}`:"none"}}>
+                  <div style={{fontSize:".75rem",fontWeight:600,color:sec.color,marginBottom:4}}>{e.term}</div>
+                  <div style={{fontSize:".68rem",color:C.sub,lineHeight:1.6}}>{e.def}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Roadmap ───────────────────────────────────────────────────────────────────
 const ROADMAP = [
   {
-    phase:"Phase 1 — Requires Daily Data (2+ snapshots)",
+    phase:"Next — Momentum Scoring (needs 7+ snapshots)",
     color:C.blue,
     items:[
-      {title:"Claim Velocity by Tier",metric:"velocity_i = Δclaimed_per_day / total_printed_i",
-       desc:"How fast is each prize tier being claimed per day? Divergence between top-tier velocity (slow) and base-tier velocity (fast) is the leading indicator of improving concentration."},
-      {title:"Momentum (Concentration Trend)",metric:"momentum = conc_ratio_today − conc_ratio_7d_ago",
-       desc:"Is concentration improving or eroding compared to last week? A game trending from 0.98× to 1.03× is more attractive than one at 1.03× that was 1.08× two weeks ago."},
-      {title:"Win Rate Velocity",metric:"Δwin_rate_ratio per day",
-       desc:"Is the win rate drift ratio accelerating or decelerating? A game whose pool is enriching faster each day is in a favorable phase."},
+      {title:"Momentum as Score Multiplier",metric:"sigmoid_mult(momentum, k=TBD, max_boost=±0.10)",
+       desc:"Once 7+ daily snapshots smooth the velocity data, add momentum as a small multiplier to adj_prof_score. Games actively concentrating get a nudge; games diluting get dinged."},
     ],
   },
   {
@@ -535,7 +803,7 @@ function Roadmap(){
     <div style={{padding:"14px 16px 48px"}}>
       <div style={{marginBottom:16}}>
         <div style={{fontSize:"1rem",fontWeight:700,color:C.text,marginBottom:4}}>Analysis Roadmap</div>
-        <div style={{fontSize:".68rem",color:C.dim,lineHeight:1.6}}>Metrics we want to build, organized by data dependency. Phase 1 unlocks the moment we have 2 daily snapshots.</div>
+        <div style={{fontSize:".68rem",color:C.dim,lineHeight:1.6}}>Upcoming metrics and features, organized by data dependency. See the Guide tab for explanations of everything that's live.</div>
       </div>
       {ROADMAP.map((phase,pi)=>(
         <div key={pi} style={{marginBottom:14}}>
@@ -627,6 +895,8 @@ function AppInner(){
       if(sortKey==="maxloss")    return (a.max_loss_per_pack??99999)-(b.max_loss_per_pack??99999);
       if(sortKey==="maturity")   return b.maturity-a.maturity;
       if(sortKey==="floor")      return (b.downside_protection??0)-(a.downside_protection??0);
+      if(sortKey==="velocity")   return (b.velocity_divergence??-99)-(a.velocity_divergence??-99);
+      if(sortKey==="momentum")   return (b.momentum??-99)-(a.momentum??-99);
       if(sortKey==="price")      return a.ticket_price-b.ticket_price;
       return a.game_name.localeCompare(b.game_name);
     });
@@ -660,6 +930,9 @@ function AppInner(){
         ::-webkit-scrollbar-thumb{background:#333338;border-radius:2px}
         select option{background:#18181c}
         input::placeholder{color:#58586a}
+        @keyframes tipIn{from{opacity:0;transform:translateX(-50%) translateY(4px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+        .tip-btn{display:none}
+        @media(hover:none){.tip-btn{display:inline-flex}}
         .card-grid{display:grid;grid-template-columns:1fr;gap:10px}
         @media(min-width:768px){.card-grid{grid-template-columns:1fr 1fr}}
         @media(min-width:1200px){.card-grid{grid-template-columns:1fr 1fr 1fr}}
@@ -690,7 +963,7 @@ function AppInner(){
           </div>
         </div>
         <div style={{display:"flex",gap:0,borderBottom:`1px solid ${C.b1}`}}>
-          {[{id:"games",label:"Games"},{id:"roadmap",label:"Roadmap"}].map(t=>(
+          {[{id:"games",label:"Games"},{id:"guide",label:"Guide"},{id:"roadmap",label:"Roadmap"}].map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)}
               style={{flex:1,padding:"8px 0",background:"transparent",border:"none",
                 borderBottom:`2px solid ${tab===t.id?C.green:"transparent"}`,
@@ -703,7 +976,7 @@ function AppInner(){
         </div>
       </div>
 
-      {tab==="roadmap"?<Roadmap/>:(
+      {tab==="guide"?<Guide/>:tab==="roadmap"?<Roadmap/>:(
         <>
           <div style={{padding:"10px 16px 8px",background:C.s1,borderBottom:`1px solid ${C.b1}`}}>
             <div className="filter-bar" style={{display:"flex",flexWrap:"wrap",gap:8,maxWidth:1400,margin:"0 auto",alignItems:"center"}}>
@@ -734,6 +1007,8 @@ function AppInner(){
                 <option value="maxloss">Sort: Lowest Max Loss</option>
                 <option value="floor">Sort: Best Floor Protection</option>
                 <option value="maturity">Sort: Most Mature</option>
+                <option value="velocity">Sort: Velocity Divergence</option>
+                <option value="momentum">Sort: Momentum</option>
                 <option value="price">Sort: Ticket Price</option>
               </select>
             </div>
