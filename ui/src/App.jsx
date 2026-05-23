@@ -614,6 +614,12 @@ function AppInner(){
   );
 
   const games=DB.games, asOf=DB.asOf;
+  // Debug: find any object values that would cause React error 310
+  games.forEach((g,i)=>{
+    Object.entries(g).forEach(([k,v])=>{
+      if(v!==null && typeof v==='object' && k!=='prize_levels') console.error(`Game ${i} (${g.game_name}) field "${k}" is object:`,v);
+    });
+  });
   const prices=useMemo(()=>[...new Set(games.map(g=>g.ticket_price))].sort((a,b)=>a-b),[]);
 
   const filtered=useMemo(()=>{
