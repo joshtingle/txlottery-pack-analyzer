@@ -63,28 +63,32 @@ function Bar({v=0,color,h=5}){
 function Tip({text,children}){
   const [open,setOpen]=useState(false);
   const ref=useRef(null);
+  const [pos,setPos]=useState({top:0,left:0});
   const close=useCallback(e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false)},[]);
   useEffect(()=>{if(open){document.addEventListener("pointerdown",close);return()=>document.removeEventListener("pointerdown",close)}},[open,close]);
+  const show=useCallback(()=>{
+    if(!ref.current)return;
+    const r=ref.current.getBoundingClientRect();
+    const left=Math.max(12,Math.min(r.left+r.width/2,window.innerWidth-12));
+    const above=r.top>160;
+    setPos({left,top:above?r.top-8:r.bottom+8,above});
+    setOpen(true);
+  },[]);
   if(!text) return children||null;
   return(
-    <span ref={ref} style={{position:"relative",display:"inline-flex",alignItems:"center"}}
-      onMouseEnter={()=>setOpen(true)} onMouseLeave={()=>setOpen(false)}>
+    <span ref={ref} style={{display:"inline-flex",alignItems:"center",cursor:"pointer"}}
+      onMouseEnter={show} onMouseLeave={()=>setOpen(false)}
+      onClick={e=>{e.stopPropagation();open?setOpen(false):show()}}>
       {children}
-      <span className="tip-btn" onClick={e=>{e.stopPropagation();setOpen(o=>!o)}}
-        style={{marginLeft:4,fontSize:".55rem",width:14,height:14,borderRadius:7,
-          alignItems:"center",justifyContent:"center",
-          background:open?C.b2:C.s3,color:C.dim,cursor:"pointer",flexShrink:0,
-          border:`1px solid ${C.b1}`,transition:"background .15s"}}>?</span>
       {open&&(
-        <span style={{position:"absolute",bottom:"calc(100% + 8px)",left:"50%",transform:"translateX(-50%)",
+        <span style={{position:"fixed",zIndex:999,
+          left:pos.left,top:pos.above?pos.top:undefined,bottom:pos.above?undefined:window.innerHeight-pos.top,
+          transform:"translateX(-50%)",
           background:C.s4,color:C.text,fontSize:".65rem",lineHeight:1.45,padding:"8px 12px",
           borderRadius:8,border:`1px solid ${C.b2}`,boxShadow:"0 4px 20px rgba(0,0,0,.45)",
-          width:"max-content",maxWidth:260,zIndex:50,pointerEvents:"none",
+          width:"max-content",maxWidth:"min(280px, calc(100vw - 24px))",pointerEvents:"none",
           animation:"tipIn .15s ease-out"}}>
           {text}
-          <span style={{position:"absolute",top:"100%",left:"50%",transform:"translateX(-50%)",
-            width:0,height:0,borderLeft:"6px solid transparent",borderRight:"6px solid transparent",
-            borderTop:`6px solid ${C.b2}`}}/>
         </span>
       )}
     </span>
@@ -185,9 +189,7 @@ function GameCard({g,rank,onClick,scoreMax}){
   const evgwc=ratioColor(g.ev_given_win_ratio,1.0);
 
   return(
-    <div onClick={()=>actionable&&onClick(g)}
-      style={{background:C.s1,border:`1px solid ${C.b1}`,borderRadius:12,padding:"14px 16px",
-        cursor:actionable?"pointer":"default",
+    <div style={{background:C.s1,border:`1px solid ${C.b1}`,borderRadius:12,padding:"14px 16px",
         opacity:["too_new","no_data"].includes(g.verdict)?.4:1}}>
 
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -322,6 +324,15 @@ function GameCard({g,rank,onClick,scoreMax}){
               <Tag label="Momentum ↑" color={C.teal} bg={C.tealBg}
                 tip="Concentration is actively increasing compared to the prior snapshot"/>}
           </div>
+          <button onClick={e=>{e.stopPropagation();onClick(g)}}
+            style={{width:"100%",marginTop:10,padding:"8px 0",background:C.s3,
+              border:`1px solid ${C.b1}`,borderRadius:8,color:C.sub,
+              fontFamily:"'Poppins',sans-serif",fontSize:".7rem",fontWeight:500,
+              cursor:"pointer",transition:"background .15s,color .15s"}}
+            onMouseEnter={e=>{e.currentTarget.style.background=C.s4;e.currentTarget.style.color=C.text}}
+            onMouseLeave={e=>{e.currentTarget.style.background=C.s3;e.currentTarget.style.color=C.sub}}>
+            View Details →
+          </button>
         </>
       )}
     </div>
@@ -931,8 +942,6 @@ function AppInner(){
         select option{background:#18181c}
         input::placeholder{color:#58586a}
         @keyframes tipIn{from{opacity:0;transform:translateX(-50%) translateY(4px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
-        .tip-btn{display:none}
-        @media(hover:none){.tip-btn{display:inline-flex}}
         .card-grid{display:grid;grid-template-columns:1fr;gap:10px}
         @media(min-width:768px){.card-grid{grid-template-columns:1fr 1fr}}
         @media(min-width:1200px){.card-grid{grid-template-columns:1fr 1fr 1fr}}
