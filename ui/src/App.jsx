@@ -60,7 +60,7 @@ function Bar({v=0,color,h=5}){
     </div>
   );
 }
-function Tip({text,children}){
+function Tip({text,children,block}){
   const [open,setOpen]=useState(false);
   const ref=useRef(null);
   const [pos,setPos]=useState({top:0,left:0});
@@ -75,8 +75,9 @@ function Tip({text,children}){
     setOpen(true);
   },[]);
   if(!text) return children||null;
+  const W=block?"div":"span";
   return(
-    <span ref={ref} style={{display:"inline-flex",alignItems:"center",cursor:"pointer"}}
+    <W ref={ref} style={block?{cursor:"pointer"}:{display:"inline-flex",alignItems:"center",cursor:"pointer"}}
       onMouseEnter={show} onMouseLeave={()=>setOpen(false)}
       onClick={e=>{e.stopPropagation();open?setOpen(false):show()}}>
       {children}
@@ -91,7 +92,7 @@ function Tip({text,children}){
           {text}
         </span>
       )}
-    </span>
+    </W>
   );
 }
 function Tag({label,color,bg,tip}){
@@ -125,15 +126,15 @@ function SectionHeader({label,sub}){
   );
 }
 function Tile({label,val,sub,color=C.text,accent,tip}){
-  return(
+  const inner=(
     <div style={{background:C.s2,border:`1px solid ${accent||C.b1}`,borderRadius:10,padding:"10px 12px"}}>
-      <div style={{fontSize:".58rem",color:C.dim,marginBottom:4}}>
-        {tip?<Tip text={tip}><span>{label}</span></Tip>:label}
-      </div>
+      <div style={{fontSize:".58rem",color:C.dim,marginBottom:4}}>{label}</div>
       <div style={{fontSize:"1rem",fontWeight:700,color,lineHeight:1}}>{val}</div>
       {sub&&<div style={{fontSize:".58rem",color:C.dim,marginTop:4,lineHeight:1.4}}>{sub}</div>}
     </div>
   );
+  if(!tip) return inner;
+  return <Tip text={tip} block>{inner}</Tip>;
 }
 function ConcPanel({title,launchP,currP,ratio,printed,remaining,note,asOdds}){
   const cc=concColor(ratio);
@@ -224,12 +225,12 @@ function GameCard({g,rank,onClick,scoreMax}){
               {label:"EV / Pack",    val:dollar(g.ev_per_pack),       color:C.green,
                tip:"Expected dollar value of remaining prizes in one pack"},
             ].map(({label,val,color,tip})=>(
-              <div key={label} style={{background:C.s3,borderRadius:8,padding:"8px 9px"}}>
-                <div style={{fontSize:".55rem",color:C.dim,marginBottom:2}}>
-                  <Tip text={tip}><span>{label}</span></Tip>
+              <Tip key={label} text={tip} block>
+                <div style={{background:C.s3,borderRadius:8,padding:"8px 9px"}}>
+                  <div style={{fontSize:".55rem",color:C.dim,marginBottom:2}}>{label}</div>
+                  <div style={{fontSize:".9rem",fontWeight:700,color}}>{val}</div>
                 </div>
-                <div style={{fontSize:".9rem",fontWeight:700,color}}>{val}</div>
-              </div>
+              </Tip>
             ))}
           </div>
 
@@ -245,13 +246,13 @@ function GameCard({g,rank,onClick,scoreMax}){
               {label:"Velocity",  val:g.velocity_divergence!=null?signed(g.velocity_divergence):"—", color:velDivColor(g.velocity_divergence), sub:"base−top",
                tip:"Claim rate gap between common and rare tiers. Positive means common prizes are draining faster, so concentration is actively improving"},
             ].map(({label,val,color,sub,tip})=>(
-              <div key={label} style={{background:C.s3,borderRadius:8,padding:"8px 9px"}}>
-                <div style={{fontSize:".55rem",color:C.dim,marginBottom:2}}>
-                  <Tip text={tip}><span>{label}</span></Tip>
+              <Tip key={label} text={tip} block>
+                <div style={{background:C.s3,borderRadius:8,padding:"8px 9px"}}>
+                  <div style={{fontSize:".55rem",color:C.dim,marginBottom:2}}>{label}</div>
+                  <div style={{fontSize:".9rem",fontWeight:700,color}}>{val}</div>
+                  <div style={{fontSize:".52rem",color:C.dim}}>{sub}</div>
                 </div>
-                <div style={{fontSize:".9rem",fontWeight:700,color}}>{val}</div>
-                <div style={{fontSize:".52rem",color:C.dim}}>{sub}</div>
-              </div>
+              </Tip>
             ))}
           </div>
 
@@ -294,15 +295,15 @@ function GameCard({g,rank,onClick,scoreMax}){
               {label:"Floor protection",   v:g.downside_protection||0, color:C.amber,
                tip:"Guarantee as a fraction of pack cost. Higher = less money at risk per pack"},
             ].map(({label,v,color,tip})=>(
-              <div key={label}>
-                <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
-                  <span style={{fontSize:".55rem",color:C.dim}}>
-                    <Tip text={tip}><span>{label}</span></Tip>
-                  </span>
-                  <span style={{fontSize:".55rem",color:C.sub}}>{pct(v,0)}</span>
+              <Tip key={label} text={tip} block>
+                <div>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                    <span style={{fontSize:".55rem",color:C.dim}}>{label}</span>
+                    <span style={{fontSize:".55rem",color:C.sub}}>{pct(v,0)}</span>
+                  </div>
+                  <Bar v={v} color={color} h={4}/>
                 </div>
-                <Bar v={v} color={color} h={4}/>
-              </div>
+              </Tip>
             ))}
           </div>
 
@@ -508,24 +509,24 @@ function Detail({g,onClose,scoreMax}){
                 ))}
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,borderTop:`1px solid ${C.b1}`,paddingTop:10}}>
-                <div>
-                  <div style={{fontSize:".58rem",color:C.dim,marginBottom:3}}>
-                    <Tip text="Guarantee ÷ worst-case simulated return (P10). Above 1.5× means the floor catches most bad outcomes"><span>Guarantee adequacy</span></Tip>
+                <Tip text="Guarantee ÷ worst-case simulated return (P10). Above 1.5× means the floor catches most bad outcomes" block>
+                  <div>
+                    <div style={{fontSize:".58rem",color:C.dim,marginBottom:3}}>Guarantee adequacy</div>
+                    <div style={{fontSize:".9rem",fontWeight:700,color:g.guarantee_adequacy>=2?C.green:g.guarantee_adequacy>=1.5?C.amber:C.sub}}>
+                      {x1(g.guarantee_adequacy)}
+                    </div>
+                    <div style={{fontSize:".55rem",color:C.dim,marginTop:2}}>Guarantee vs P10. Above 1.5× is strong</div>
                   </div>
-                  <div style={{fontSize:".9rem",fontWeight:700,color:g.guarantee_adequacy>=2?C.green:g.guarantee_adequacy>=1.5?C.amber:C.sub}}>
-                    {x1(g.guarantee_adequacy)}
+                </Tip>
+                <Tip text="Spread between best and worst simulated outcomes. Lower = more predictable returns" block>
+                  <div>
+                    <div style={{fontSize:".58rem",color:C.dim,marginBottom:3}}>Variance (P90/P10)</div>
+                    <div style={{fontSize:".9rem",fontWeight:700,color:g.variance_score<=3?C.green:g.variance_score<=5?C.amber:C.sub}}>
+                      {x1(g.variance_score)}
+                    </div>
+                    <div style={{fontSize:".55rem",color:C.dim,marginTop:2}}>Lower = more predictable</div>
                   </div>
-                  <div style={{fontSize:".55rem",color:C.dim,marginTop:2}}>Guarantee vs P10. Above 1.5× is strong</div>
-                </div>
-                <div>
-                  <div style={{fontSize:".58rem",color:C.dim,marginBottom:3}}>
-                    <Tip text="Spread between best and worst simulated outcomes. Lower = more predictable returns"><span>Variance (P90/P10)</span></Tip>
-                  </div>
-                  <div style={{fontSize:".9rem",fontWeight:700,color:g.variance_score<=3?C.green:g.variance_score<=5?C.amber:C.sub}}>
-                    {x1(g.variance_score)}
-                  </div>
-                  <div style={{fontSize:".55rem",color:C.dim,marginTop:2}}>Lower = more predictable</div>
-                </div>
+                </Tip>
               </div>
             </div>
           </>
