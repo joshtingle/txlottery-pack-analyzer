@@ -241,7 +241,7 @@ function GameCard({g,rank,onClick,scoreMax}){
               {label:"Conc.",     val:g.n_meaningful_tiers>0?x1(g.composite_conc):"N/A", color:cc, sub:"vs launch",
                tip:"Scarcity-weighted concentration of rare prizes. >1.0× means rare prizes are retaining better than average"},
               {label:"Velocity",  val:g.velocity_divergence!=null?signed(g.velocity_divergence):"—", color:velDivColor(g.velocity_divergence), sub:"base−top",
-               tip:"Claim rate gap between common and rare tiers. Positive means common prizes draining faster — concentration is actively improving"},
+               tip:"Claim rate gap between common and rare tiers. Positive means common prizes are draining faster, so concentration is actively improving"},
             ].map(({label,val,color,sub,tip})=>(
               <div key={label} style={{background:C.s3,borderRadius:8,padding:"8px 9px"}}>
                 <div style={{fontSize:".55rem",color:C.dim,marginBottom:2}}>
@@ -257,7 +257,7 @@ function GameCard({g,rank,onClick,scoreMax}){
           {g.scenario_p10!=null&&(
             <div style={{background:C.s3,borderRadius:8,padding:"9px 11px",marginBottom:10}}>
               <div style={{fontSize:".58rem",color:C.sub,marginBottom:7}}>
-                <Tip text="20,000 simulated pack draws. Light band = P10–P90 range, dark band = P25–P75, blue line = median, amber line = guarantee floor">
+                <Tip text="20,000 simulated pack draws. Light band = P10 to P90 range, dark band = P25 to P75, blue line = median, amber line = guarantee floor">
                   <span>Pack return scenarios</span>
                 </Tip>
                 {" · floor: "}{dollar(g.guarantee_per_pack)}
@@ -278,7 +278,7 @@ function GameCard({g,rank,onClick,scoreMax}){
               </div>
               <div style={{display:"flex",justifyContent:"space-between",marginTop:5,fontSize:".56rem",color:C.dim}}>
                 <Tip text="Worst 10% of simulated packs returned this or less"><span>P10: {dollar(g.scenario_p10)}</span></Tip>
-                <Tip text="Median — half of simulated packs returned more, half less"><span style={{color:C.blue}}>P50: {dollar(g.scenario_p50)}</span></Tip>
+                <Tip text="Median: half of simulated packs returned more, half less"><span style={{color:C.blue}}>P50: {dollar(g.scenario_p50)}</span></Tip>
                 <Tip text="Best 10% of simulated packs returned this or more"><span>P90: {dollar(g.scenario_p90)}</span></Tip>
               </div>
             </div>
@@ -288,7 +288,7 @@ function GameCard({g,rank,onClick,scoreMax}){
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:10}}>
             {[
               {label:"Maturity confidence",v:g.maturity_confidence||0,color:C.blue,
-               tip:"How reliable the analysis is based on sell-through. Peaks around 65% sold — too new or nearly exhausted = low confidence"},
+               tip:"How reliable the analysis is based on sell-through. Peaks around 65% sold. Too new or nearly exhausted = low confidence"},
               {label:"Floor protection",   v:g.downside_protection||0, color:C.amber,
                tip:"Guarantee as a fraction of pack cost. Higher = less money at risk per pack"},
             ].map(({label,v,color,tip})=>(
@@ -306,12 +306,12 @@ function GameCard({g,rank,onClick,scoreMax}){
 
           <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
             <Tag label={`Guar. ${dollar(g.guarantee_per_pack)}`} color={C.amber} bg={C.amberBg}
-              tip="Minimum guaranteed payout per pack — your loss floor"/>
+              tip="Minimum guaranteed payout per pack. This is your loss floor"/>
             {g.jp_remaining===0&&<Tag label="Jackpot Gone" color={C.red} bg={C.redBg}
               tip="All jackpot prizes have been claimed"/>}
             {g.jp_remaining>0&&(g.jp_conc_ratio||0)>=1.02&&
               <Tag label={`JP ↑${x1(g.jp_conc_ratio)}`} color={C.green} bg={C.greenBg}
-                tip="Jackpot is retaining better than average — your odds of hitting it are improving relative to launch"/>}
+                tip="Jackpot is retaining better than average, so your odds of hitting it have improved relative to launch"/>}
             {(g.win_rate_ratio||0)>=1.0&&
               <Tag label="Win Rate ↑" color={C.teal} bg={C.tealBg}
                 tip="More winners per remaining ticket than at launch"/>}
@@ -364,7 +364,7 @@ function Detail({g,onClose,scoreMax}){
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:12}}>
                 {[
                   {label:"ROI on Max Loss",     val:pct(g.roi_on_max_loss,0),     color:rc,    note:"Return on at-risk capital"},
-                  {label:"Maturity Confidence", val:pct(g.maturity_confidence,0), color:C.blue,note:`${pct(g.maturity,0)} sold — peaks ~65%`},
+                  {label:"Maturity Confidence", val:pct(g.maturity_confidence,0), color:C.blue,note:`${pct(g.maturity,0)} sold, peaks ~65%`},
                   {label:"Floor Protection",    val:pct(g.downside_protection,0), color:C.amber,note:`${dollar(g.guarantee_per_pack)} of ${dollar(g.pack_cost)}`},
                 ].map(({label,val,color,note})=>(
                   <div key={label}>
@@ -428,10 +428,10 @@ function Detail({g,onClose,scoreMax}){
             </div>
             <div style={{marginBottom:20}}>
               <Tile label="Velocity Divergence" val={g.velocity_divergence!=null?signed(g.velocity_divergence):"—"}
-                sub={g.velocity_divergence>0?"Base draining faster than top — concentration improving"
-                  :g.velocity_divergence<0?"Top draining faster — concentration eroding":"Even drain rates"}
+                sub={g.velocity_divergence>0?"Base draining faster than top, concentration improving"
+                  :g.velocity_divergence<0?"Top draining faster, concentration eroding":"Even drain rates"}
                 color={velDivColor(g.velocity_divergence)} accent={velDivColor(g.velocity_divergence)+"33"}
-                tip="Gap between base and top tier drain rates. Positive means common prizes are being claimed faster than rare ones — the pool is concentrating"/>
+                tip="Gap between base and top tier drain rates. Positive means common prizes are being claimed faster than rare ones, so the pool is concentrating"/>
             </div>
           </>
         )}
@@ -446,9 +446,9 @@ function Detail({g,onClose,scoreMax}){
               <Tile label="Pack Cost"   val={dollar(g.pack_cost)}
                 tip="Total cost to buy one full pack"/>
               <Tile label="Guarantee"  val={dollar(g.guarantee_per_pack)} sub="Minimum return" color={C.amber} accent={C.amber+"44"}
-                tip="Minimum guaranteed payout per pack — your loss floor"/>
+                tip="Minimum guaranteed payout per pack. This is your loss floor"/>
               <Tile label="Max Loss"   val={dollar(g.max_loss_per_pack)}  sub="True risk" color={C.red} accent={C.red+"44"}
-                tip="Pack cost minus guarantee — the most you can actually lose"/>
+                tip="Pack cost minus guarantee. The most you can actually lose"/>
               <Tile label="EV Anchor"  val={pct(g.sell_through,1)} sub={`${dollar(g.prize_levels?.[0]?.amount)} tier sell-thru`} color={C.blue}
                 tip="Estimated % of tickets sold, based on the smallest prize tier's claim rate"/>
               <Tile label="EV / Pack"  val={dollar(g.ev_per_pack)} color={g.ev_per_pack>g.guarantee_per_pack?C.green:C.amber}
@@ -456,7 +456,7 @@ function Detail({g,onClose,scoreMax}){
               <Tile label="Above Guarantee" val={dollar(g.expected_above_guarantee)} color={g.expected_above_guarantee>0?C.green:C.red} accent={g.expected_above_guarantee>0?C.green+"33":C.red+"33"}
                 tip="How much EV per pack exceeds the guarantee floor"/>
               <Tile label="ROI on Max Loss" val={pct(g.roi_on_max_loss,0)} color={rc} accent={rc+"33"}
-                tip="Above-guarantee value as a percentage of max loss — your risk-adjusted return"/>
+                tip="Above-guarantee value as a percentage of max loss. Your risk-adjusted return"/>
             </div>
           </>
         )}
@@ -464,7 +464,7 @@ function Detail({g,onClose,scoreMax}){
         {/* Scenarios */}
         {g.scenario_p50!=null&&(
           <>
-            <SectionHeader label="Pack Return Scenarios" sub="Monte Carlo simulation — 20,000 simulated packs"/>
+            <SectionHeader label="Pack Return Scenarios" sub="Monte Carlo simulation, 20,000 simulated packs"/>
             <div style={{background:C.s2,border:`1px solid ${C.b1}`,borderRadius:10,padding:14,marginBottom:14}}>
               <div style={{position:"relative",height:28,borderRadius:4,overflow:"hidden",background:C.s3,marginBottom:10}}>
                 {[
@@ -504,7 +504,7 @@ function Detail({g,onClose,scoreMax}){
                   <div style={{fontSize:".9rem",fontWeight:700,color:g.guarantee_adequacy>=2?C.green:g.guarantee_adequacy>=1.5?C.amber:C.sub}}>
                     {x1(g.guarantee_adequacy)}
                   </div>
-                  <div style={{fontSize:".55rem",color:C.dim,marginTop:2}}>Guarantee vs P10 — above 1.5× is strong</div>
+                  <div style={{fontSize:".55rem",color:C.dim,marginTop:2}}>Guarantee vs P10. Above 1.5× is strong</div>
                 </div>
                 <div>
                   <div style={{fontSize:".58rem",color:C.dim,marginBottom:3}}>
@@ -530,7 +530,7 @@ function Detail({g,onClose,scoreMax}){
             note={`Ultra-rare prizes weighted ~4× more than scarce. Ratio above 1.0× = big prizes concentrating.`}/>
         ):(
           <div style={{background:C.s2,border:`1px solid ${C.b1}`,borderRadius:10,padding:14,marginBottom:14}}>
-            <div style={{fontSize:".7rem",color:C.dim}}>No scarce or rarer prize tiers — all prizes are high-volume. Concentration signal not applicable.</div>
+            <div style={{fontSize:".7rem",color:C.dim}}>No scarce or rarer prize tiers. All prizes are high-volume, so concentration signal does not apply.</div>
           </div>
         )}
 
@@ -542,7 +542,7 @@ function Detail({g,onClose,scoreMax}){
           ratio={g.jp_conc_ratio} printed={g.jp_printed} remaining={g.jp_remaining}
           asOdds={true}
           note={g.jp_remaining===0?"All jackpots claimed."
-            :g.jp_conc_ratio>=1.0?"Jackpot more concentrated than at launch — odds have improved."
+            :g.jp_conc_ratio>=1.0?"Jackpot more concentrated than at launch. Odds have improved."
             :"Jackpot draining faster than overall pool."}/>
 
         {/* Prize table */}
@@ -607,7 +607,7 @@ const GUIDE_SECTIONS = [
       {term:"The Core Idea",
        def:"Texas Lottery scratch-off packs come with a guaranteed minimum payout. This transforms a pure gamble into a bounded-loss proposition. We track every game's remaining prize pool daily and compute which packs offer the best risk-adjusted expected value above that guarantee floor."},
       {term:"Sell-Through Estimation",
-       def:"We estimate how many tickets have been sold using the smallest prize tier's claim rate — small prizes get cashed almost immediately, so their claim rate is the best proxy for actual tickets sold. This is more accurate than using overall maturity, which over-counts remaining tickets when big prizes have already been hit."},
+       def:"We estimate how many tickets have been sold using the smallest prize tier's claim rate. Small prizes get cashed almost immediately, so their claim rate is the best proxy for actual tickets sold. This is more accurate than using overall maturity, which over-counts remaining tickets when big prizes have already been hit."},
     ],
   },
   {
@@ -617,17 +617,17 @@ const GUIDE_SECTIONS = [
       {term:"ROI on Risk",
        def:"Expected return above the guarantee, expressed as a percentage of your maximum possible loss (pack cost minus guarantee). A 60% ROI means for every dollar you could lose, you expect to get back $0.60 in EV above the floor."},
       {term:"Max Loss",
-       def:"The most you can actually lose on one pack: pack cost minus the guaranteed payout. This is your true risk — not the pack price."},
+       def:"The most you can actually lose on one pack: pack cost minus the guaranteed payout. This is your true risk, not the pack price."},
       {term:"EV / Pack",
        def:"The expected dollar value of remaining prizes across one pack of tickets. Calculated from the current remaining prize pool divided by estimated remaining tickets, multiplied by pack size."},
       {term:"Win Rate",
-       def:"Current win rate divided by launch win rate. Above 1.0× means there are more winners per remaining ticket than when the game launched — the pool is enriching."},
+       def:"Current win rate divided by launch win rate. Above 1.0× means there are more winners per remaining ticket than when the game launched, so the pool is enriching."},
       {term:"EV if Win",
-       def:"Average value of a winning ticket now vs at launch. Above 1.0× means the remaining wins are worth more on average — larger prizes are retaining disproportionately."},
+       def:"Average value of a winning ticket now vs at launch. Above 1.0× means the remaining wins are worth more on average because larger prizes are retaining disproportionately."},
       {term:"Concentration",
-       def:"Scarcity-weighted measure of how well rare prizes are retaining compared to the overall pool. Ultra-rare prizes get ~16× the weight of scarce prizes. Above 1.0× means rare prizes are still in the pool at a higher rate than average — the pool is concentrated toward bigger wins."},
+       def:"Scarcity-weighted measure of how well rare prizes are retaining compared to the overall pool. Ultra-rare prizes get ~16× the weight of scarce prizes. Above 1.0× means rare prizes are still in the pool at a higher rate than average, tilting the pool toward bigger wins."},
       {term:"Velocity",
-       def:"The gap between base-tier and top-tier claim rates per day. Positive means common prizes are being claimed faster than rare ones — concentration is actively improving right now, not just high from a past state."},
+       def:"The gap between base-tier and top-tier claim rates per day. Positive means common prizes are being claimed faster than rare ones, so concentration is actively improving right now, not just high from a past state."},
     ],
   },
   {
@@ -637,11 +637,11 @@ const GUIDE_SECTIONS = [
       {term:"How It's Built",
        def:"We simulate 20,000 pack purchases using the current prize pool odds. Each simulation randomly draws prizes at current probabilities to produce a total pack return. The distribution of those 20,000 outcomes gives us the percentile bands."},
       {term:"P10 / P50 / P90",
-       def:"P10 is the 10th percentile — only 10% of simulated packs returned less than this. P50 is the median outcome. P90 is the 90th percentile — only 10% returned more. The light band spans P10–P90; the dark band spans P25–P75."},
+       def:"P10 is the 10th percentile: only 10% of simulated packs returned less than this. P50 is the median outcome. P90 is the 90th percentile: only 10% returned more. The light band spans P10 to P90; the dark band spans P25 to P75."},
       {term:"Blue Line (Median)",
-       def:"The vertical blue line marks the median (P50) pack return — your most likely outcome."},
+       def:"The vertical blue line marks the median (P50) pack return, your most likely outcome."},
       {term:"Amber Line (Guarantee)",
-       def:"The amber line marks the guaranteed minimum payout. When it sits well below P10, the guarantee is genuinely protective — even bad luck beats the floor."},
+       def:"The amber line marks the guaranteed minimum payout. When it sits well below P10, even bad luck beats the floor."},
     ],
   },
   {
@@ -651,7 +651,7 @@ const GUIDE_SECTIONS = [
       {term:"Maturity Confidence",
        def:"How much we trust the analysis based on sell-through rate. Uses a bell curve that peaks around 65% sold. Too new (<10% sold) means insufficient data; nearly exhausted (>92%) means the pool is depleted and scores are unreliable."},
       {term:"Floor Protection",
-       def:"Guarantee as a fraction of pack cost. A $100 pack with an $85 guarantee has 85% floor protection — you can only lose $15. Higher protection means less capital at risk."},
+       def:"Guarantee as a fraction of pack cost. A $100 pack with an $85 guarantee has 85% floor protection, meaning you can only lose $15. Higher protection means less capital at risk."},
     ],
   },
   {
@@ -659,13 +659,13 @@ const GUIDE_SECTIONS = [
     color:C.green,
     entries:[
       {term:"Guar. $XXX",
-       def:"The minimum guaranteed payout for one pack. This is your loss floor — the worst possible outcome."},
+       def:"The minimum guaranteed payout for one pack. This is your loss floor, the worst possible outcome."},
       {term:"JP ↑X.XX×",
-       def:"The jackpot is retaining better than average. The number shows how concentrated jackpot odds are relative to launch — above 1.0× means your per-ticket jackpot odds have improved."},
+       def:"The jackpot is retaining better than average. The number shows how concentrated jackpot odds are relative to launch. Above 1.0× means your per-ticket jackpot odds have improved."},
       {term:"Win Rate ↑",
-       def:"Current win rate exceeds launch win rate — more winners per remaining ticket than when the game started."},
+       def:"Current win rate exceeds launch win rate. More winners per remaining ticket than when the game started."},
       {term:"EV|Win ↑",
-       def:"Average winning ticket value exceeds launch — remaining wins are worth more on average."},
+       def:"Average winning ticket value exceeds launch. Remaining wins are worth more on average."},
       {term:"Momentum ↑",
        def:"Concentration is actively increasing compared to the prior daily snapshot. The pool is getting better, not just good."},
       {term:"Jackpot Gone",
@@ -683,7 +683,7 @@ const GUIDE_SECTIONS = [
       {term:"Base Tier Velocity",
        def:"Average daily claim rate across common and uncommon prize tiers, normalized by total printed. This is how fast the everyday prizes are being claimed."},
       {term:"Top Tier Velocity",
-       def:"Average daily claim rate across scarce, rare, and ultra-rare tiers. When this is lower than base tier velocity, it means rare prizes are being claimed more slowly — the pool is concentrating."},
+       def:"Average daily claim rate across scarce, rare, and ultra-rare tiers. When this is lower than base tier velocity, rare prizes are being claimed more slowly and the pool is concentrating."},
       {term:"Velocity Divergence",
        def:"Base velocity minus top velocity. Positive = common prizes draining faster than rare ones = concentration is actively improving. This is the headline velocity signal shown on the card."},
     ],
@@ -693,9 +693,9 @@ const GUIDE_SECTIONS = [
     color:C.gold,
     entries:[
       {term:"Composite Score",
-       def:"The final ranking metric (adj_prof_score). Starts with a base score of ROI × maturity confidence × floor protection, then applies four sigmoid multipliers for concentration, jackpot concentration, win rate drift, and EV|win drift. Each multiplier is anchored to 1.0× at neutral — no signal produces no adjustment."},
+       def:"The final ranking metric (adj_prof_score). Starts with a base score of ROI × maturity confidence × floor protection, then applies four sigmoid multipliers for concentration, jackpot concentration, win rate drift, and EV|win drift. Each multiplier is anchored to 1.0× at neutral, so no signal produces no adjustment."},
       {term:"Verdict Tiers",
-       def:"Percentile-based labels recalibrated each run. Elite = top 5%, Strong Buy = top 18%, Consider = top 45%, Marginal = positive EV below top 45%, Avoid = EV at or below guarantee. These shift as the game universe changes — a game can move from Strong Buy to Consider without any change to its own metrics if the overall field improved."},
+       def:"Percentile-based labels recalibrated each run. Elite = top 5%, Strong Buy = top 18%, Consider = top 45%, Marginal = positive EV below top 45%, Avoid = EV at or below guarantee. These shift as the game universe changes. A game can move from Strong Buy to Consider without any change to its own metrics if the overall field improved."},
       {term:"Score Ring",
        def:"The circular gauge on each card. Normalized against the highest-scoring game in the current dataset (score_max), so #1 always reads 100 and relative positions are meaningful across the full range."},
     ],
@@ -707,7 +707,7 @@ const GUIDE_SECTIONS = [
       {term:"Tier Labels",
        def:"Prizes classified by scarcity: common (<1 in 500), uncommon (1 in 500+), scarce (1 in 5,000+), rare (1 in 50,000+), ultra-rare (1 in 500,000+). Only scarce and above are 'meaningful' for concentration analysis."},
       {term:"Deviation (pp)",
-       def:"This tier's retention rate minus the game's overall retention rate, in percentage points. Positive means this tier is retaining better than average — prizes at this level are being claimed more slowly than the norm."},
+       def:"This tier's retention rate minus the game's overall retention rate, in percentage points. Positive means this tier is retaining better than average and prizes at this level are being claimed more slowly than the norm."},
       {term:"Retention",
        def:"Percentage of originally printed prizes still remaining (unclaimed). High retention on rare tiers = good; high retention on common tiers = not yet mature."},
       {term:"Vel/day",
@@ -723,7 +723,7 @@ function Guide(){
     <div style={{padding:"14px 16px 48px",maxWidth:700,margin:"0 auto"}}>
       <div style={{marginBottom:16}}>
         <div style={{fontSize:"1rem",fontWeight:700,color:C.text,marginBottom:4}}>Metric Guide</div>
-        <div style={{fontSize:".68rem",color:C.dim,lineHeight:1.6}}>What every number, chart, and indicator means — tap any section to expand.</div>
+        <div style={{fontSize:".68rem",color:C.dim,lineHeight:1.6}}>What every number, chart, and indicator means. Tap any section to expand.</div>
       </div>
       {GUIDE_SECTIONS.map((sec,si)=>(
         <div key={si} style={{marginBottom:14}}>
@@ -759,7 +759,7 @@ function Guide(){
 // ── Roadmap ───────────────────────────────────────────────────────────────────
 const ROADMAP = [
   {
-    phase:"Next — Momentum Scoring (needs 7+ snapshots)",
+    phase:"Next: Momentum Scoring (needs 7+ snapshots)",
     color:C.blue,
     items:[
       {title:"Momentum as Score Multiplier",metric:"sigmoid_mult(momentum, k=TBD, max_boost=±0.10)",
@@ -767,7 +767,7 @@ const ROADMAP = [
     ],
   },
   {
-    phase:"Phase 2 — Requires Systematic Detail Page Scraping",
+    phase:"Phase 2: Systematic Detail Page Scraping",
     color:C.purple,
     items:[
       {title:"Time-Adjusted Pack Value",metric:"urgency_factor = 1 + (1 / days_until_close)",
@@ -777,7 +777,7 @@ const ROADMAP = [
     ],
   },
   {
-    phase:"Phase 3 — Requires Historical Price Data",
+    phase:"Phase 3: Historical Price Data",
     color:C.amber,
     items:[
       {title:"Cross-Price Normalized ROI",metric:"normalized_roi = roi_on_max_loss / sqrt(max_loss_per_pack)",
@@ -787,13 +787,13 @@ const ROADMAP = [
     ],
   },
   {
-    phase:"Phase 4 — Requires External Data",
+    phase:"Phase 4: External Data",
     color:C.green,
     items:[
       {title:"Retailer Density Score",metric:"TX Lottery retailer locator API",
        desc:"High-volume retailers sell faster, meaning their packs reflect a more rapidly depleted pool than rural stores."},
       {title:"Second-Chance Drawing Value",metric:"Requires scraping active second-chance promotions",
-       desc:"Some TX Lottery games add EV through second-chance drawings for non-winning tickets — currently ignored entirely."},
+       desc:"Some TX Lottery games add EV through second-chance drawings for non-winning tickets. Currently ignored entirely."},
     ],
   },
 ];
