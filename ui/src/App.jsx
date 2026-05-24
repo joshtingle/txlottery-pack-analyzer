@@ -63,15 +63,21 @@ function Bar({v=0,color,h=5}){
 function Tip({text,children,block}){
   const [open,setOpen]=useState(false);
   const ref=useRef(null);
+  const tipRef=useCallback(el=>{
+    if(!el)return;
+    const tr=el.getBoundingClientRect();
+    const pad=12;
+    if(tr.left<pad) el.style.left=pad+"px";
+    else if(tr.right>window.innerWidth-pad) el.style.left=(window.innerWidth-pad-tr.width)+"px";
+  },[]);
   const [pos,setPos]=useState({top:0,left:0});
   const close=useCallback(e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false)},[]);
   useEffect(()=>{if(open){document.addEventListener("pointerdown",close);return()=>document.removeEventListener("pointerdown",close)}},[open,close]);
   const show=useCallback(()=>{
     if(!ref.current)return;
     const r=ref.current.getBoundingClientRect();
-    const left=Math.max(12,Math.min(r.left+r.width/2,window.innerWidth-12));
     const above=r.top>160;
-    setPos({left,top:above?r.top-8:r.bottom+8,above});
+    setPos({left:r.left+r.width/2,top:above?r.top-8:r.bottom+8,above});
     setOpen(true);
   },[]);
   if(!text) return children||null;
@@ -82,7 +88,7 @@ function Tip({text,children,block}){
       onClick={e=>{e.stopPropagation();open?setOpen(false):show()}}>
       {children}
       {open&&(
-        <span style={{position:"fixed",zIndex:999,
+        <span ref={tipRef} style={{position:"fixed",zIndex:999,
           left:pos.left,top:pos.above?pos.top:undefined,bottom:pos.above?undefined:window.innerHeight-pos.top,
           transform:"translateX(-50%)",
           background:C.s4,color:C.text,fontSize:".65rem",lineHeight:1.45,padding:"8px 12px",
