@@ -157,6 +157,29 @@ always reads 100 and relative positions are meaningful.
 - **Guarantee adequacy** = guarantee / P10 — above 1.5× means the floor is
   genuinely protective
 - **Variance score** = P90 / P10 — lower means more predictable outcome
+- **p_pack_profit** = fraction of simulated packs whose return ≥ pack cost
+
+### Jackpot Hunter Metrics
+
+Computed in `compute_hunter_metrics()` for three thresholds — $1k, $10k, $100k
+(column suffixes `_1k`, `_10k`, `_100k`). These answer a different question
+than `adj_prof_score`: not "which pack grinds the best EV" but "which game
+sells the cheapest exposure to a large prize."
+
+```
+p_hit        = 1 - (1 - qualifying_remaining / remaining_tix) ^ pack_size
+burn         = pack_cost - EV(prizes below threshold)     [expected net cost]
+cost_per_hit = burn / p_hit          [expected total net spend per hit]
+enrich       = p_hit / p_hit_at_launch_odds
+```
+
+`p_hit = 0.0` (exactly) means no live qualifying prizes — hard-gate these out
+of any hunter ranking. `cost_per_hit` is NULL in that case. The two rankings
+disagree almost entirely by design: a game can be Elite for grinding while
+being a terrible jackpot hunt (e.g. one jackpot left across 115k packs), and
+a "marginal" game can be the cheapest big-prize exposure on the board.
+Hunting is negative-EV in every game; these metrics minimize the cost of
+exposure, they cannot make it profitable in expectation.
 
 ---
 
@@ -258,7 +281,7 @@ Uses only: `react`, `recharts` (not currently used but available),
 - All three computed in `compute_velocity_metrics()` which runs after
   `assign_verdicts()` in both `run()` and `run_recompute()`.
 
-### Phase 1b — Momentum scoring (needs 7+ daily snapshots)
+### Phase 1b — Momentum scoring (UNBLOCKED — 40+ daily snapshots as of 2026-07-01)
 - **Momentum as a score multiplier** — once velocity data is smoothed over a
   7-day window, add `sigmoid_mult(momentum, k=TBD, max_boost=±0.10)` to the
   `adj_prof_score` formula. Games actively concentrating get a nudge; games

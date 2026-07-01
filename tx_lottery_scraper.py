@@ -311,6 +311,7 @@ def monte_carlo_pack(
     pack_size: int,
     remaining_tix: float,
     n_sims: int = None,
+    pack_cost: float = None,
 ) -> dict | None:
     if not pack_size or not remaining_tix or remaining_tix <= 0:
         return None
@@ -329,6 +330,7 @@ def monte_carlo_pack(
             results += _np.random.binomial(pack_size, p, n) * amount
         results.sort()
         pct = lambda q: float(results[min(int(q * n), n - 1)])
+        p_profit = (float((results >= pack_cost).mean()) if pack_cost else None)
     else:
         n = n_sims or 5_000
         results = []
@@ -337,6 +339,7 @@ def monte_carlo_pack(
             results.append(v)
         results.sort()
         pct = lambda q: results[min(int(q * n), n - 1)]
+        p_profit = (sum(1 for v in results if v >= pack_cost) / n if pack_cost else None)
 
     return {
         "p10": round(pct(0.10), 2),
@@ -344,7 +347,53 @@ def monte_carlo_pack(
         "p50": round(pct(0.50), 2),
         "p75": round(pct(0.75), 2),
         "p90": round(pct(0.90), 2),
+        "p_profit": (round(p_profit, 4) if p_profit is not None else None),
     }
+
+
+# ── Jackpot-hunter metrics ────────────────────────────────────────────────────
+# For each threshold: what does a pack cost you net of sub-threshold payouts,
+# and what are the odds it contains a prize at or above the threshold?
+
+HUNTER_THRESHOLDS = [(1_000, "1k"), (10_000, "10k"), (100_000, "100k")]
+
+
+def compute_hunter_metrics(
+    levels: list[dict],
+    pack_size: int,
+    pack_cost: float,
+    remaining_tix: float,
+    total_tickets: int,
+) -> dict:
+    out = {}
+    for thresh, sfx in HUNTER_THRESHOLDS:
+        p_hit = burn = cost_per_hit = enrich = None
+
+        if pack_size and pack_cost is not None and remaining_tix and remaining_tix > 0:
+            qual_remaining = sum(lv["remaining"] for lv in levels if lv["amount"] >= thresh)
+            p_ticket = min(qual_remaining / remaining_tix, 1.0)
+            p_hit = 1.0 - (1.0 - p_ticket) ** pack_size
+
+            ev_below = (sum(lv["remaining"] * lv["amount"]
+                            for lv in levels if lv["amount"] < thresh)
+                        / remaining_tix * pack_size)
+            burn = pack_cost - ev_below
+            if p_hit > 0:
+                cost_per_hit = burn / p_hit
+
+            if total_tickets:
+                qual_printed = sum(lv["total"] for lv in levels if lv["amount"] >= thresh)
+                if qual_printed > 0:
+                    p_ticket_launch = min(qual_printed / total_tickets, 1.0)
+                    p_hit_launch = 1.0 - (1.0 - p_ticket_launch) ** pack_size
+                    if p_hit_launch > 0:
+                        enrich = p_hit / p_hit_launch
+
+        out[f"hunter_p_hit_{sfx}"]        = _r(p_hit, 8)
+        out[f"hunter_burn_{sfx}"]         = _r(burn, 2)
+        out[f"hunter_cost_per_hit_{sfx}"] = _r(cost_per_hit, 0)
+        out[f"hunter_enrich_{sfx}"]       = _r(enrich, 4)
+    return out
 
 
 def build_game_records(csv_rows: list[dict], snapshot_date: str) -> dict[int, dict]:
@@ -493,10 +542,12 @@ def compute_analytics(game: dict, detail: dict) -> dict:
     p_top_launch_pack    = p_jp_launch_pack
     p_top_curr_pack      = p_jp_curr_pack
 
-    mc = monte_carlo_pack(levels, pack_size, remaining_tix)
+    mc = monte_carlo_pack(levels, pack_size, remaining_tix, pack_cost=pack_cost)
     scenario_p10 = scenario_p25 = scenario_p50 = scenario_p75 = scenario_p90 = None
     guarantee_adequacy = variance_score = None
+    p_pack_profit = None
     if mc:
+        p_pack_profit = mc.get("p_profit")
         scenario_p10, scenario_p25, scenario_p50 = mc["p10"], mc["p25"], mc["p50"]
         scenario_p75, scenario_p90 = mc["p75"], mc["p90"]
         if guarantee is not None and scenario_p10 and scenario_p10 > 0:
@@ -577,6 +628,7 @@ def compute_analytics(game: dict, detail: dict) -> dict:
         "scenario_p90":             scenario_p90,
         "guarantee_adequacy":       guarantee_adequacy,
         "variance_score":           variance_score,
+        "p_pack_profit":            p_pack_profit,
         "prof_score":               _r(prof_score, 6),
         "adj_prof_score":           _r(adj_prof_score, 6),
         "conc_mult":                _r(conc_mult, 6),
@@ -587,6 +639,9 @@ def compute_analytics(game: dict, detail: dict) -> dict:
         "detail_url":               detail.get("detail_url"),
         "computed_at":              datetime.now(timezone.utc).isoformat(),
     }
+
+    rec.update(compute_hunter_metrics(levels, pack_size, pack_cost,
+                                      remaining_tix, total_tickets))
 
     rec["_levels"] = levels
     return rec
@@ -815,6 +870,19 @@ CREATE TABLE IF NOT EXISTS games_analysis (
     scenario_p90                REAL,
     guarantee_adequacy          REAL,
     variance_score              REAL,
+    p_pack_profit               REAL,
+    hunter_p_hit_1k             REAL,
+    hunter_burn_1k              REAL,
+    hunter_cost_per_hit_1k      REAL,
+    hunter_enrich_1k            REAL,
+    hunter_p_hit_10k            REAL,
+    hunter_burn_10k             REAL,
+    hunter_cost_per_hit_10k     REAL,
+    hunter_enrich_10k           REAL,
+    hunter_p_hit_100k           REAL,
+    hunter_burn_100k            REAL,
+    hunter_cost_per_hit_100k    REAL,
+    hunter_enrich_100k          REAL,
     prof_score                  REAL,
     adj_prof_score              REAL,
     conc_mult                   REAL,
@@ -940,6 +1008,19 @@ _SQLSRV_DDL = [
         scenario_p90                FLOAT,
         guarantee_adequacy          FLOAT,
         variance_score              FLOAT,
+        p_pack_profit               FLOAT,
+        hunter_p_hit_1k             FLOAT,
+        hunter_burn_1k              FLOAT,
+        hunter_cost_per_hit_1k      FLOAT,
+        hunter_enrich_1k            FLOAT,
+        hunter_p_hit_10k            FLOAT,
+        hunter_burn_10k             FLOAT,
+        hunter_cost_per_hit_10k     FLOAT,
+        hunter_enrich_10k           FLOAT,
+        hunter_p_hit_100k           FLOAT,
+        hunter_burn_100k            FLOAT,
+        hunter_cost_per_hit_100k    FLOAT,
+        hunter_enrich_100k          FLOAT,
         prof_score                  FLOAT,
         adj_prof_score              FLOAT,
         conc_mult                   FLOAT,
@@ -991,6 +1072,13 @@ _SQLITE_MIGRATIONS = {
         ("scenario_p10","REAL"), ("scenario_p25","REAL"), ("scenario_p50","REAL"),
         ("scenario_p75","REAL"), ("scenario_p90","REAL"),
         ("guarantee_adequacy","REAL"), ("variance_score","REAL"),
+        ("p_pack_profit","REAL"),
+        ("hunter_p_hit_1k","REAL"), ("hunter_burn_1k","REAL"),
+        ("hunter_cost_per_hit_1k","REAL"), ("hunter_enrich_1k","REAL"),
+        ("hunter_p_hit_10k","REAL"), ("hunter_burn_10k","REAL"),
+        ("hunter_cost_per_hit_10k","REAL"), ("hunter_enrich_10k","REAL"),
+        ("hunter_p_hit_100k","REAL"), ("hunter_burn_100k","REAL"),
+        ("hunter_cost_per_hit_100k","REAL"), ("hunter_enrich_100k","REAL"),
         ("prof_score","REAL"), ("adj_prof_score","REAL"),
         ("conc_mult","REAL"), ("jp_mult","REAL"), ("wr_mult","REAL"), ("evgw_mult","REAL"),
         ("verdict","TEXT"),
@@ -1021,6 +1109,13 @@ _SQLSRV_MIGRATIONS = {
         ("scenario_p10","FLOAT"), ("scenario_p25","FLOAT"), ("scenario_p50","FLOAT"),
         ("scenario_p75","FLOAT"), ("scenario_p90","FLOAT"),
         ("guarantee_adequacy","FLOAT"), ("variance_score","FLOAT"),
+        ("p_pack_profit","FLOAT"),
+        ("hunter_p_hit_1k","FLOAT"), ("hunter_burn_1k","FLOAT"),
+        ("hunter_cost_per_hit_1k","FLOAT"), ("hunter_enrich_1k","FLOAT"),
+        ("hunter_p_hit_10k","FLOAT"), ("hunter_burn_10k","FLOAT"),
+        ("hunter_cost_per_hit_10k","FLOAT"), ("hunter_enrich_10k","FLOAT"),
+        ("hunter_p_hit_100k","FLOAT"), ("hunter_burn_100k","FLOAT"),
+        ("hunter_cost_per_hit_100k","FLOAT"), ("hunter_enrich_100k","FLOAT"),
         ("prof_score","FLOAT"), ("adj_prof_score","FLOAT"),
         ("conc_mult","FLOAT"), ("jp_mult","FLOAT"), ("wr_mult","FLOAT"), ("evgw_mult","FLOAT"),
         ("verdict","NVARCHAR(30)"),

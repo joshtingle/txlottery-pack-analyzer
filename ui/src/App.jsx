@@ -6,6 +6,17 @@ const dollar = n => n!=null&&!isNaN(n)?"$"+fmt(n):"—";
 const x2     = n => n!=null&&!isNaN(n)?Number(n).toFixed(3)+"×":"—";
 const x1     = n => n!=null&&!isNaN(n)?Number(n).toFixed(2)+"×":"—";
 const signed = n => n!=null&&!isNaN(n)?(n>=0?"+":"")+Number(n).toFixed(3):"—";
+const pctAdaptive = n=>{
+  if(n==null||isNaN(n)) return "—";
+  const v=Number(n)*100;
+  if(v===0) return "0%";
+  if(v<0.001) return v.toFixed(5)+"%";
+  if(v<0.01)  return v.toFixed(4)+"%";
+  if(v<1)     return v.toFixed(3)+"%";
+  if(v<10)    return v.toFixed(2)+"%";
+  return v.toFixed(1)+"%";
+};
+const hitOdds = p=> p>0 ? `1 in ${fmt(Math.round(1/p))}` : "—";
 
 const C = {
   bg:"#111113", s1:"#18181c", s2:"#202025", s3:"#28282e", s4:"#303038",
@@ -31,6 +42,12 @@ const VERDICTS = {
   no_data:          {label:"No Data",    color:C.dim,    bg:C.s3},
 };
 
+const THRESHOLDS   = ["1k","10k","100k"];
+const THRESH_LABEL = {"1k":"$1K+","10k":"$10K+","100k":"$100K+"};
+const THRESH_DESC  = {"1k":"$1,000","10k":"$10,000","100k":"$100,000"};
+function hasHunterData(g){
+  return THRESHOLDS.some(t=>g[`hunter_p_hit_${t}`]!=null||g[`hunter_burn_${t}`]!=null||g[`hunter_cost_per_hit_${t}`]!=null||g[`hunter_enrich_${t}`]!=null) || g.p_pack_profit!=null;
+}
 function vm(v){ return VERDICTS[v]||VERDICTS.no_data; }
 function roiColor(r){ return r>=0.5?C.green:r>=0.25?C.amber:r>=0?C.sub:C.red; }
 function ratioColor(r,t=1.0){ return r==null?C.dim:r>=(t+0.02)?C.green:r>=(t-0.02)?C.sub:r>=(t-0.10)?C.amber:C.red; }
@@ -346,6 +363,112 @@ function GameCard({g,rank,onClick,scoreMax}){
   );
 }
 
+// ── Hunter mode card ────────────────────────────────────────────────────────────
+function HunterGameCard({g,rank,onClick,threshold}){
+  const v=vm(g.verdict);
+  const pKey=`hunter_p_hit_${threshold}`, burnKey=`hunter_burn_${threshold}`,
+        costKey=`hunter_cost_per_hit_${threshold}`, enrichKey=`hunter_enrich_${threshold}`;
+  const p=g[pKey], burn=g[burnKey], cost=g[costKey], enrich=g[enrichKey];
+  const ec=ratioColor(enrich,1.0);
+  const pp=g.p_pack_profit;
+  const ppColor = pp>=0.5?C.green:pp>=0.25?C.amber:C.red;
+  const desc=THRESH_DESC[threshold];
+
+  return(
+    <div style={{background:C.s1,border:`1px solid ${C.b1}`,borderRadius:12,padding:"14px 16px",
+        opacity:["too_new","no_data"].includes(g.verdict)?.4:1}}>
+
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <Tag label={v.label} color={v.color} bg={v.bg}/>
+          {rank<=10&&<span style={{fontSize:".6rem",color:C.dim}}>#{rank}</span>}
+        </div>
+      </div>
+
+      <div style={{fontSize:"1rem",fontWeight:600,color:C.text,marginBottom:3}}>{g.game_name}</div>
+      <div style={{fontSize:".63rem",color:C.dim,display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
+        <span>{dollar(g.ticket_price)}/ticket</span>
+        <span>{pct(g.maturity,0)} sold</span>
+        <span>{g.pack_size}pk · {dollar(g.pack_cost)}</span>
+        {g.close_date&&<span style={{color:C.red}}>⚠ {g.close_date}</span>}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7,marginBottom:7}}>
+        {[
+          {label:"Hit Odds",   val:hitOdds(p), sub:pctAdaptive(p), color:C.text,
+           tip:`Chance one full pack contains at least one prize worth ${desc} or more, based on tickets remaining right now.`},
+          {label:"$ / Hit",    val:cost!=null?dollar(cost):"—", sub:"expected net spend", color:C.text,
+           tip:`Expected total net spend to land one ${desc}+ prize: net burn per pack divided by hit odds.`},
+          {label:"Enrichment", val:enrich!=null?x1(enrich):"—", sub:"vs launch day", color:ec,
+           tip:`Current ${desc}+ hit odds divided by launch-day odds. Above 1.0× means the remaining pool is richer in big prizes than when the game launched.`},
+        ].map(({label,val,sub,color,tip})=>(
+          <Tip key={label} text={tip} block>
+            <div style={{background:C.s3,borderRadius:8,padding:"8px 9px"}}>
+              <div style={{fontSize:".55rem",color:C.dim,marginBottom:2}}>{label}</div>
+              <div style={{fontSize:".9rem",fontWeight:700,color}}>{val}</div>
+              <div style={{fontSize:".52rem",color:C.dim}}>{sub}</div>
+            </div>
+          </Tip>
+        ))}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7,marginBottom:10}}>
+        {[
+          {label:"Net Burn/Pack", val:burn!=null?dollar(burn):"—", sub:"after small-prize payback", color:burn<0?C.green:C.text,
+           tip:`Expected net cost of one pack after subtracting the expected payout from prizes below ${desc}. This is what the hunt actually costs per pack, ignoring the big prize itself.`},
+          {label:"Max Loss",      val:dollar(g.max_loss_per_pack), sub:"cost − guarantee", color:C.red,
+           tip:"Worst-case loss per pack: pack cost minus guarantee."},
+          {label:"Pack Profit",   val:pp!=null?pct(pp,0):"—", sub:"chance pack beats cost", color:ppColor,
+           tip:"Monte Carlo probability that a single pack's total return, all prizes considered, is at least what it cost."},
+        ].map(({label,val,sub,color,tip})=>(
+          <Tip key={label} text={tip} block>
+            <div style={{background:C.s3,borderRadius:8,padding:"8px 9px"}}>
+              <div style={{fontSize:".55rem",color:C.dim,marginBottom:2}}>{label}</div>
+              <div style={{fontSize:".9rem",fontWeight:700,color}}>{val}</div>
+              <div style={{fontSize:".52rem",color:C.dim}}>{sub}</div>
+            </div>
+          </Tip>
+        ))}
+      </div>
+
+      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+        <Tag label={`Guar. ${dollar(g.guarantee_per_pack)}`} color={C.amber} bg={C.amberBg}
+          tip="Minimum guaranteed payout per pack. This is your loss floor"/>
+        {g.jp_amount!=null&&
+          <Tag label={`Top ${dollar(g.jp_amount)} · ${fmt(g.jp_remaining)} left`} color={C.purple} bg={C.purpleBg}
+            tip="The largest prize tier in this game and how many are still unclaimed."/>}
+        {g.jp_remaining===0&&<Tag label="Jackpot Gone" color={C.red} bg={C.redBg}
+          tip="All top-tier prizes have been claimed"/>}
+      </div>
+      <button onClick={e=>{e.stopPropagation();onClick(g)}}
+        style={{width:"100%",marginTop:10,padding:"8px 0",background:C.s3,
+          border:`1px solid ${C.b1}`,borderRadius:8,color:C.sub,
+          fontFamily:"'Poppins',sans-serif",fontSize:".7rem",fontWeight:500,
+          cursor:"pointer",transition:"background .15s,color .15s"}}
+        onMouseEnter={e=>{e.currentTarget.style.background=C.s4;e.currentTarget.style.color=C.text}}
+        onMouseLeave={e=>{e.currentTarget.style.background=C.s3;e.currentTarget.style.color=C.sub}}>
+        View Details →
+      </button>
+    </div>
+  );
+}
+
+function HunterBanner({g,threshold}){
+  if(!g) return null;
+  const pKey=`hunter_p_hit_${threshold}`, costKey=`hunter_cost_per_hit_${threshold}`, enrichKey=`hunter_enrich_${threshold}`;
+  const p=g[pKey], cost=g[costKey], enrich=g[enrichKey];
+  const desc=THRESH_DESC[threshold];
+  const sentence=`${g.game_name} is the cheapest way to chase a ${desc}+ prize right now: about ${hitOdds(p)} packs (${dollar(g.ticket_price)}/ticket), roughly ${cost!=null?dollar(cost):"—"} in expected net spend per hit, and a max loss of ${dollar(g.max_loss_per_pack)} per pack${enrich>=1.05?`, with ${x1(enrich)} the odds a launch-day buyer had`:""}.`;
+  return(
+    <div style={{background:C.goldBg,border:`1px solid ${C.gold}55`,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
+      <div style={{fontSize:".62rem",color:C.gold,textTransform:"uppercase",letterSpacing:"1px",fontWeight:700,marginBottom:6}}>
+        ★ Cheapest Hit · {THRESH_LABEL[threshold]}
+      </div>
+      <div style={{fontSize:".8rem",color:C.text,lineHeight:1.6}}>{sentence}</div>
+    </div>
+  );
+}
+
 // ── Detail view ───────────────────────────────────────────────────────────────
 function Detail({g,onClose,scoreMax}){
   const v=vm(g.verdict);
@@ -475,6 +598,55 @@ function Detail({g,onClose,scoreMax}){
                 tip="How much EV per pack exceeds the guarantee floor"/>
               <Tile label="ROI on Max Loss" val={pct(g.roi_on_max_loss,0)} color={rc} accent={rc+"33"}
                 tip="Above-guarantee value as a percentage of max loss. Your risk-adjusted return"/>
+            </div>
+          </>
+        )}
+
+        {/* Jackpot Hunter */}
+        {hasHunterData(g)&&(
+          <>
+            <SectionHeader label="Jackpot Hunter" sub="Cost and odds of landing a big prize at each threshold, net of small-prize payback"/>
+            <div style={{background:C.s2,border:`1px solid ${C.b1}`,borderRadius:10,overflow:"hidden",marginBottom:14}}>
+              {THRESHOLDS.map(t=>{
+                const p=g[`hunter_p_hit_${t}`], burn=g[`hunter_burn_${t}`], cost=g[`hunter_cost_per_hit_${t}`], enrich=g[`hunter_enrich_${t}`];
+                const ec=ratioColor(enrich,1.0);
+                return(
+                  <div key={t} style={{borderBottom:`1px solid ${C.b1}`,padding:"10px 14px"}}>
+                    <div style={{fontSize:".72rem",fontWeight:700,color:C.text,marginBottom:6}}>{THRESH_LABEL[t]}</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8}}>
+                      <Tip text={`Chance one pack contains a prize worth ${THRESH_DESC[t]} or more.`} block>
+                        <div>
+                          <div style={{fontSize:".52rem",color:C.dim}}>Hit Odds</div>
+                          <div style={{fontSize:".75rem",fontWeight:600,color:C.text}}>{hitOdds(p)}</div>
+                        </div>
+                      </Tip>
+                      <Tip text={`Expected net cost of a pack after subtracting expected payout from prizes below ${THRESH_DESC[t]}.`} block>
+                        <div>
+                          <div style={{fontSize:".52rem",color:C.dim}}>Net Burn</div>
+                          <div style={{fontSize:".75rem",fontWeight:600,color:C.text}}>{burn!=null?dollar(burn):"—"}</div>
+                        </div>
+                      </Tip>
+                      <Tip text={`Expected total net spend to land one ${THRESH_DESC[t]}+ prize (net burn ÷ hit odds).`} block>
+                        <div>
+                          <div style={{fontSize:".52rem",color:C.dim}}>$ / Hit</div>
+                          <div style={{fontSize:".75rem",fontWeight:600,color:C.text}}>{cost!=null?dollar(cost):"—"}</div>
+                        </div>
+                      </Tip>
+                      <Tip text={`Current ${THRESH_DESC[t]}+ hit odds vs launch-day odds. Above 1.0× means the pool is richer in big prizes now.`} block>
+                        <div>
+                          <div style={{fontSize:".52rem",color:C.dim}}>Enrichment</div>
+                          <div style={{fontSize:".75rem",fontWeight:600,color:ec}}>{enrich!=null?x1(enrich):"—"}</div>
+                        </div>
+                      </Tip>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{marginBottom:20}}>
+              <Tile label="Pack Profit Chance" val={g.p_pack_profit!=null?pct(g.p_pack_profit,0):"—"}
+                sub="Chance one pack's total return ≥ its cost, all prizes considered" color={g.p_pack_profit>=0.5?C.green:C.amber}
+                tip="Monte Carlo probability that a single pack's total return is at least what it cost."/>
             </div>
           </>
         )}
@@ -734,6 +906,26 @@ const GUIDE_SECTIONS = [
        def:"The smallest prize tier, marked in blue. Its claim rate is used to estimate sell-through because small prizes are cashed almost immediately after purchase."},
     ],
   },
+  {
+    title:"Jackpot Hunter Mode",
+    color:C.gold,
+    entries:[
+      {term:"What Hunter Mode Optimizes",
+       def:"Value mode ranks packs by overall risk-adjusted return. Hunter mode ignores that and asks a narrower question: if all you care about is landing one big prize ($1,000+, $10,000+, or $100,000+), which pack gets you there for the least expected money, net of what the smaller prizes pay back along the way?"},
+      {term:"Hit Odds",
+       def:"The probability that a single pack contains at least one prize at or above the chosen threshold, shown as '1 in N packs.' Based on tickets remaining right now, not launch odds."},
+      {term:"$ / Hit",
+       def:"Expected total net spend to land one qualifying prize: net burn per pack divided by hit odds. This is the real cost of the hunt, not the ticket price."},
+      {term:"Net Burn",
+       def:"Expected net cost of one pack after subtracting the expected payout from prizes below the threshold. Small prizes offset some of the pack cost; burn is what's left after that offset."},
+      {term:"Enrichment",
+       def:"Current hit odds for the threshold divided by the odds a launch-day buyer had. Above 1.0× means the remaining pool is richer in qualifying prizes than when the game started, usually because smaller prizes have been claimed faster than the big ones."},
+      {term:"Pack Profit",
+       def:"Monte Carlo probability that a single pack's total return, counting every prize tier, is at least what the pack cost. A general profitability check, independent of the hunt threshold."},
+      {term:"The Honest Caveat",
+       def:"Hunting big prizes is negative expected value in every single game here, full stop. Hunter mode does not find a profitable jackpot bet; it minimizes the expected cost of exposure to a big prize. Use it to hunt more cheaply, not to convince yourself the hunt pays off."},
+    ],
+  },
 ];
 function Guide(){
   const [open,setOpen]=useState({});
@@ -881,6 +1073,9 @@ function AppInner(){
   const [priceF,setPriceF]=useState("all");
   const [sortKey,setSortKey]=useState("adj_score");
   const [search,setSearch]=useState("");
+  const [mode,setMode]=useState("value");
+  const [threshold,setThreshold]=useState("1k");
+  const [hunterSort,setHunterSort]=useState("cost_per_hit");
 
   useEffect(()=>{
     const base=import.meta.env.VITE_API_BASE_URL||"";
@@ -898,6 +1093,35 @@ function AppInner(){
     let list=[...games];
     if(search)         list=list.filter(g=>g.game_name.toLowerCase().includes(search.toLowerCase())||String(g.game_number).includes(search));
     if(priceF!=="all") list=list.filter(g=>g.ticket_price===parseFloat(priceF));
+
+    if(mode==="hunter"){
+      const pKey=`hunter_p_hit_${threshold}`, costKey=`hunter_cost_per_hit_${threshold}`,
+            enrichKey=`hunter_enrich_${threshold}`, burnKey=`hunter_burn_${threshold}`;
+      list=list.filter(g=>(g[pKey]||0)>0&&!g.is_new_game&&g.verdict!=="no_data");
+      list.sort((a,b)=>{
+        if(hunterSort==="cost_per_hit"){
+          const av=a[costKey],bv=b[costKey];
+          if(av==null&&bv==null) return 0;
+          if(av==null) return 1;
+          if(bv==null) return -1;
+          return av-bv;
+        }
+        if(hunterSort==="p_hit")       return (b[pKey]??-1)-(a[pKey]??-1);
+        if(hunterSort==="enrich")      return (b[enrichKey]??-99)-(a[enrichKey]??-99);
+        if(hunterSort==="maxloss")     return (a.max_loss_per_pack??99999)-(b.max_loss_per_pack??99999);
+        if(hunterSort==="pack_profit") return (b.p_pack_profit??-1)-(a.p_pack_profit??-1);
+        if(hunterSort==="burn"){
+          const av=a[burnKey],bv=b[burnKey];
+          if(av==null&&bv==null) return 0;
+          if(av==null) return 1;
+          if(bv==null) return -1;
+          return av-bv;
+        }
+        return 0;
+      });
+      return list;
+    }
+
     if(verdictF==="actionable")  list=list.filter(g=>["elite","strong_buy","consider"].includes(g.verdict)&&!g.is_new_game);
     else if(verdictF==="elite")  list=list.filter(g=>g.verdict==="elite");
     else if(verdictF!=="all")    list=list.filter(g=>g.verdict===verdictF);
@@ -919,7 +1143,19 @@ function AppInner(){
       return a.game_name.localeCompare(b.game_name);
     });
     return list;
-  },[games,search,priceF,verdictF,sortKey]);
+  },[games,search,priceF,verdictF,sortKey,mode,threshold,hunterSort]);
+
+  const hunterTop=useMemo(()=>{
+    if(mode!=="hunter") return null;
+    const costKey=`hunter_cost_per_hit_${threshold}`;
+    let best=null;
+    for(const g of filtered){
+      const v=g[costKey];
+      if(v==null) continue;
+      if(best==null||v<best[costKey]) best=g;
+    }
+    return best;
+  },[filtered,mode,threshold]);
 
   if(!DB) return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",fontFamily:"Poppins,sans-serif",background:"#1a1a2e",color:"#e0e0e0"}}>
@@ -933,6 +1169,12 @@ function AppInner(){
   const elites  = games.filter(g=>g.verdict==="elite"&&g.adj_prof_score!=null);
   const buys    = games.filter(g=>g.verdict==="strong_buy"&&g.adj_prof_score!=null);
   const bestROI = [...elites,...buys].length ? Math.max(...[...elites,...buys].map(g=>g.roi_on_max_loss||0)) : 0;
+
+  const hunterPKey=`hunter_p_hit_${threshold}`, hunterCostKey=`hunter_cost_per_hit_${threshold}`;
+  const hunterBestP = mode==="hunter"&&filtered.length ? Math.max(...filtered.map(g=>g[hunterPKey]||0)) : 0;
+  const hunterCheapest = mode==="hunter"
+    ? filtered.reduce((min,g)=>{const v=g[hunterCostKey]; return v!=null&&(min==null||v<min)?v:min;},null)
+    : null;
 
   const ctrl={background:C.s2,border:`1px solid ${C.b1}`,color:C.text,
     fontFamily:"'Poppins',sans-serif",fontSize:".76rem",padding:"7px 11px",
@@ -966,11 +1208,15 @@ function AppInner(){
             <div style={{fontSize:".58rem",color:C.dim,marginTop:1}}>Snapshot: {asOf}</div>
           </div>
           <div style={{display:"flex",gap:14}}>
-            {[
+            {(mode==="hunter"?[
+              {label:"Games",        val:filtered.length, color:C.gold},
+              {label:"Best Odds",    val:hunterBestP>0?hitOdds(hunterBestP):"—", color:C.green},
+              {label:"Cheapest Hit", val:hunterCheapest!=null?dollar(hunterCheapest):"—", color:C.green},
+            ]:[
               {label:"Elite",      val:elites.length, color:C.gold},
               {label:"Strong Buy", val:buys.length,   color:C.green},
               {label:"Best ROI",   val:pct(bestROI,0),color:C.green},
-            ].map(({label,val,color})=>(
+            ]).map(({label,val,color})=>(
               <div key={label} style={{textAlign:"right"}}>
                 <div style={{fontSize:".52rem",color:C.dim}}>{label}</div>
                 <div style={{fontSize:".88rem",fontWeight:700,color}}>{val}</div>
@@ -995,45 +1241,91 @@ function AppInner(){
       {tab==="guide"?<Guide/>:tab==="roadmap"?<Roadmap/>:(
         <>
           <div style={{padding:"10px 16px 8px",background:C.s1,borderBottom:`1px solid ${C.b1}`}}>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,maxWidth:1400,margin:"0 auto 8px",alignItems:"center"}}>
+              <div style={{display:"flex",background:C.s2,border:`1px solid ${C.b1}`,borderRadius:8,padding:2}}>
+                {[{id:"value",label:"Value",activeColor:C.green},{id:"hunter",label:"Hunter",activeColor:C.gold}].map(m=>(
+                  <button key={m.id} onClick={()=>{setMode(m.id);if(m.id==="hunter")setHunterSort("cost_per_hit")}}
+                    style={{padding:"7px 16px",background:mode===m.id?C.s4:"transparent",
+                      border:"none",borderRadius:6,color:mode===m.id?m.activeColor:C.dim,
+                      fontFamily:"'Poppins',sans-serif",fontSize:".72rem",
+                      fontWeight:mode===m.id?600:500,cursor:"pointer",transition:"background .15s,color .15s"}}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              {mode==="hunter"&&(
+                <div style={{display:"flex",background:C.s2,border:`1px solid ${C.b1}`,borderRadius:8,padding:2}}>
+                  {THRESHOLDS.map(t=>(
+                    <button key={t} onClick={()=>setThreshold(t)}
+                      style={{padding:"7px 14px",background:threshold===t?C.goldBg:"transparent",
+                        border:"none",borderRadius:6,color:threshold===t?C.gold:C.dim,
+                        fontFamily:"'Poppins',sans-serif",fontSize:".72rem",
+                        fontWeight:threshold===t?600:500,cursor:"pointer",transition:"background .15s,color .15s"}}>
+                      {THRESH_LABEL[t]}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="filter-bar" style={{display:"flex",flexWrap:"wrap",gap:8,maxWidth:1400,margin:"0 auto",alignItems:"center"}}>
               <input value={search} onChange={e=>setSearch(e.target.value)}
                 placeholder="Search game name or number..."
                 style={{...ctrl,padding:"9px 12px",flex:"1 1 200px",minWidth:150}}/>
-              <select value={verdictF} onChange={e=>setVerdictF(e.target.value)} style={{...ctrl,flex:"0 1 160px"}}>
-                <option value="actionable">Actionable</option>
-                <option value="elite">Elite only</option>
-                <option value="strong_buy">Strong Buy</option>
-                <option value="consider">Consider</option>
-                <option value="marginal">Marginal</option>
-                <option value="all">All</option>
-              </select>
+              {mode==="value"&&(
+                <select value={verdictF} onChange={e=>setVerdictF(e.target.value)} style={{...ctrl,flex:"0 1 160px"}}>
+                  <option value="actionable">Actionable</option>
+                  <option value="elite">Elite only</option>
+                  <option value="strong_buy">Strong Buy</option>
+                  <option value="consider">Consider</option>
+                  <option value="marginal">Marginal</option>
+                  <option value="all">All</option>
+                </select>
+              )}
               <select value={priceF} onChange={e=>setPriceF(e.target.value)} style={{...ctrl,flex:"0 1 130px"}}>
                 <option value="all">All prices</option>
                 {prices.map(p=><option key={p} value={p}>${p}</option>)}
               </select>
-              <select value={sortKey} onChange={e=>setSortKey(e.target.value)} style={{...ctrl,flex:"0 1 220px"}}>
-                <option value="adj_score">Sort: Composite Score</option>
-                <option value="roi">Sort: ROI on Max Loss</option>
-                <option value="ev">Sort: EV per Pack</option>
-                <option value="win_rate">Sort: Win Rate Drift</option>
-                <option value="evgw">Sort: EV|Win Drift</option>
-                <option value="conc">Sort: Concentration Score</option>
-                <option value="guar_adeq">Sort: Guarantee Adequacy</option>
-                <option value="variance">Sort: Lowest Variance</option>
-                <option value="maxloss">Sort: Lowest Max Loss</option>
-                <option value="floor">Sort: Best Floor Protection</option>
-                <option value="maturity">Sort: Most Mature</option>
-                <option value="velocity">Sort: Velocity Divergence</option>
-                <option value="momentum">Sort: Momentum</option>
-                <option value="price">Sort: Ticket Price</option>
-              </select>
+              {mode==="hunter"?(
+                <select value={hunterSort} onChange={e=>setHunterSort(e.target.value)} style={{...ctrl,flex:"0 1 220px"}}>
+                  <option value="cost_per_hit">Sort: Cheapest Hit</option>
+                  <option value="p_hit">Sort: Best Hit Odds</option>
+                  <option value="enrich">Sort: Most Enriched</option>
+                  <option value="maxloss">Sort: Lowest Max Loss</option>
+                  <option value="pack_profit">Sort: Pack Profit Chance</option>
+                  <option value="burn">Sort: Lowest Burn</option>
+                </select>
+              ):(
+                <select value={sortKey} onChange={e=>setSortKey(e.target.value)} style={{...ctrl,flex:"0 1 220px"}}>
+                  <option value="adj_score">Sort: Composite Score</option>
+                  <option value="roi">Sort: ROI on Max Loss</option>
+                  <option value="ev">Sort: EV per Pack</option>
+                  <option value="win_rate">Sort: Win Rate Drift</option>
+                  <option value="evgw">Sort: EV|Win Drift</option>
+                  <option value="conc">Sort: Concentration Score</option>
+                  <option value="guar_adeq">Sort: Guarantee Adequacy</option>
+                  <option value="variance">Sort: Lowest Variance</option>
+                  <option value="maxloss">Sort: Lowest Max Loss</option>
+                  <option value="floor">Sort: Best Floor Protection</option>
+                  <option value="maturity">Sort: Most Mature</option>
+                  <option value="velocity">Sort: Velocity Divergence</option>
+                  <option value="momentum">Sort: Momentum</option>
+                  <option value="price">Sort: Ticket Price</option>
+                </select>
+              )}
             </div>
           </div>
           <div style={{padding:"6px 16px 4px",fontSize:".62rem",color:C.dim,maxWidth:1400,margin:"0 auto"}}>
             {filtered.length} game{filtered.length!==1?"s":""} · tap any card for full analysis
           </div>
+          {mode==="hunter"&&hunterTop&&(
+            <div style={{padding:"0 16px",maxWidth:1432,margin:"0 auto"}}>
+              <HunterBanner g={hunterTop} threshold={threshold}/>
+            </div>
+          )}
           <div className="card-grid" style={{padding:"0 12px 24px",maxWidth:1432,margin:"0 auto"}}>
-            {filtered.map((g,i)=><GameCard key={g.game_number} g={g} rank={i+1} onClick={setSelected} scoreMax={DB.score_max}/>)}
+            {filtered.map((g,i)=>mode==="hunter"
+              ?<HunterGameCard key={g.game_number} g={g} rank={i+1} onClick={setSelected} threshold={threshold}/>
+              :<GameCard key={g.game_number} g={g} rank={i+1} onClick={setSelected} scoreMax={DB.score_max}/>)}
             {!filtered.length&&(
               <div style={{textAlign:"center",color:C.dim,padding:60,fontSize:".8rem",gridColumn:"1/-1"}}>No games match your filters.</div>
             )}
