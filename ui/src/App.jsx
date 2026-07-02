@@ -18,6 +18,36 @@ const pctAdaptive = n=>{
 };
 const hitOdds = p=> p>0 ? `1 in ${fmt(Math.round(1/p))}` : "—";
 
+// ── Close-date parsing (robust — never throws, never renders NaN) ─────────────
+function parseCloseDate(s){
+  if(s==null) return null;
+  const str=String(s).trim();
+  if(!str) return null;
+  const m=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(str);
+  let d;
+  if(m) d=new Date(Number(m[3]),Number(m[1])-1,Number(m[2]));
+  else  d=new Date(str);
+  return (d instanceof Date && !isNaN(d.getTime())) ? d : null;
+}
+function daysUntil(d){
+  if(!d) return null;
+  const now=new Date();
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const diff=Math.round((d-today)/86400000);
+  return isNaN(diff)?null:diff;
+}
+function closingSoon(g){
+  const d=parseCloseDate(g&&g.close_date);
+  if(!d) return null;
+  const days=daysUntil(d);
+  if(days==null||days<0||days>60) return null;
+  return {days,date:d};
+}
+function shortDate(d){
+  if(!(d instanceof Date)||isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US",{month:"short",day:"numeric"});
+}
+
 const C = {
   bg:"#111113", s1:"#18181c", s2:"#202025", s3:"#28282e", s4:"#303038",
   b1:"#333338", b2:"#44444c",
@@ -373,6 +403,7 @@ function HunterGameCard({g,rank,onClick,threshold}){
   const pp=g.p_pack_profit;
   const ppColor = pp>=0.5?C.green:pp>=0.25?C.amber:C.red;
   const desc=THRESH_DESC[threshold];
+  const closing=closingSoon(g);
 
   return(
     <div style={{background:C.s1,border:`1px solid ${C.b1}`,borderRadius:12,padding:"14px 16px",
@@ -439,6 +470,8 @@ function HunterGameCard({g,rank,onClick,threshold}){
             tip="The largest prize tier in this game and how many are still unclaimed."/>}
         {g.jp_remaining===0&&<Tag label="Jackpot Gone" color={C.red} bg={C.redBg}
           tip="All top-tier prizes have been claimed"/>}
+        {closing&&<Tag label={`Closes ${shortDate(closing.date)}`} color={C.red} bg={C.redBg}
+          tip="When a game closes, unclaimed prizes are voided and any pool enrichment evaporates. Factor this deadline into any buy decision."/>}
       </div>
       <button onClick={e=>{e.stopPropagation();onClick(g)}}
         style={{width:"100%",marginTop:10,padding:"8px 0",background:C.s3,
@@ -458,14 +491,170 @@ function HunterBanner({g,threshold}){
   const pKey=`hunter_p_hit_${threshold}`, costKey=`hunter_cost_per_hit_${threshold}`, enrichKey=`hunter_enrich_${threshold}`;
   const p=g[pKey], cost=g[costKey], enrich=g[enrichKey];
   const desc=THRESH_DESC[threshold];
+  const closing=closingSoon(g);
   const sentence=`${g.game_name} is the cheapest way to chase a ${desc}+ prize right now: about ${hitOdds(p)} packs (${dollar(g.ticket_price)}/ticket), roughly ${cost!=null?dollar(cost):"—"} in expected net spend per hit, and a max loss of ${dollar(g.max_loss_per_pack)} per pack${enrich>=1.05?`, with ${x1(enrich)} the odds a launch-day buyer had`:""}.`;
   return(
     <div style={{background:C.goldBg,border:`1px solid ${C.gold}55`,borderRadius:12,padding:"14px 16px",marginBottom:12}}>
-      <div style={{fontSize:".62rem",color:C.gold,textTransform:"uppercase",letterSpacing:"1px",fontWeight:700,marginBottom:6}}>
-        ★ Cheapest Hit · {THRESH_LABEL[threshold]}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:6}}>
+        <div style={{fontSize:".62rem",color:C.gold,textTransform:"uppercase",letterSpacing:"1px",fontWeight:700}}>
+          ★ Cheapest Hit · {THRESH_LABEL[threshold]}
+        </div>
+        {closing&&<Tag label={`Closes ${shortDate(closing.date)}`} color={C.red} bg={C.redBg}
+          tip="When a game closes, unclaimed prizes are voided and any pool enrichment evaporates. Factor this deadline into any buy decision."/>}
       </div>
       <div style={{fontSize:".8rem",color:C.text,lineHeight:1.6}}>{sentence}</div>
     </div>
+  );
+}
+
+// ── Session Planner (Hunter mode) ──────────────────────────────────────────────
+function SessionPlanner({games,threshold}){
+  const [open,setOpen]=useState(true);
+  const [budget,setBudget]=useState("500");
+  const budgetNum=parseFloat(budget);
+  const safeBudget=Number.isFinite(budgetNum)&&budgetNum>0?budgetNum:0;
+
+  const top5=(games||[]).slice(0,5);
+  const burnKey=`hunter_burn_${threshold}`, pKey=`hunter_p_hit_${threshold}`;
+
+  const rows=top5.map(g=>{
+    const packCost=g.pack_cost;
+    if(!packCost||packCost<=0) return null;
+    const n=Math.floor(safeBudget/packCost);
+    if(n===0) return null;
+    const totalCost=n*packCost;
+    const worstCase=n*(g.max_loss_per_pack||0);
+    const burn=g[burnKey];
+    const netSpend=burn!=null?n*burn:null;
+    const pHit=g[pKey];
+    const pAtLeastOne=pHit!=null?1-Math.pow(1-pHit,n):null;
+    return {g,n,totalCost,worstCase,netSpend,pAtLeastOne};
+  }).filter(Boolean);
+
+  const packCosts=top5.map(g=>g.pack_cost).filter(v=>v!=null&&v>0);
+  const minPackCost=packCosts.length?Math.min(...packCosts):null;
+
+  return(
+    <div style={{background:C.s1,border:`1px solid ${C.b1}`,borderRadius:12,marginBottom:12,overflow:"hidden"}}>
+      <button onClick={()=>setOpen(o=>!o)}
+        style={{width:"100%",textAlign:"left",background:"transparent",border:"none",
+          padding:"12px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:".8rem",fontWeight:600,color:C.text}}>Session Planner</span>
+          <span style={{fontSize:".58rem",color:C.dim}}>Budget-a-hunt across your top 5 visible games</span>
+        </div>
+        <span style={{color:C.dim,fontSize:".8rem",transition:"transform .2s",
+          transform:open?"rotate(180deg)":"rotate(0)"}}>▾</span>
+      </button>
+      {open&&(
+        <div style={{padding:"0 16px 16px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
+            <label style={{fontSize:".65rem",color:C.dim}}>Budget</label>
+            <div style={{position:"relative"}}>
+              <span style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",color:C.dim,fontSize:".76rem",pointerEvents:"none"}}>$</span>
+              <input type="number" value={budget} onChange={e=>setBudget(e.target.value)}
+                style={{background:C.s2,border:`1px solid ${C.b1}`,color:C.text,fontFamily:"'Poppins',sans-serif",
+                  fontSize:".76rem",padding:"7px 11px 7px 20px",borderRadius:8,outline:"none",width:120}}/>
+            </div>
+          </div>
+          {!rows.length?(
+            <div style={{fontSize:".65rem",color:C.dim,lineHeight:1.6}}>
+              {minPackCost!=null
+                ?`No pack fits this budget. Raise it to at least ${dollar(minPackCost)} to afford one pack of the cheapest game shown here.`
+                :"No games with pack cost data are currently visible to plan for."}
+            </div>
+          ):(
+            <div style={{background:C.s2,border:`1px solid ${C.b1}`,borderRadius:10,overflow:"hidden"}}>
+              {rows.map(({g,n,totalCost,worstCase,netSpend,pAtLeastOne})=>(
+                <div key={g.game_number} style={{borderBottom:`1px solid ${C.b1}`,padding:"10px 14px"}}>
+                  <div style={{fontSize:".72rem",fontWeight:700,color:C.text,marginBottom:6}}>{g.game_name}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
+                    <div>
+                      <div style={{fontSize:".5rem",color:C.dim}}>Packs</div>
+                      <div style={{fontSize:".72rem",fontWeight:600,color:C.text}}>{fmt(n)}</div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:".5rem",color:C.dim}}>Total Cost</div>
+                      <div style={{fontSize:".72rem",fontWeight:600,color:C.text}}>{dollar(totalCost)}</div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:".5rem",color:C.dim}}>Worst Case</div>
+                      <div style={{fontSize:".72rem",fontWeight:600,color:C.red}}>{dollar(worstCase)}</div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:".5rem",color:C.dim}}>Net Spend</div>
+                      <div style={{fontSize:".72rem",fontWeight:600,color:C.text}}>{netSpend!=null?dollar(netSpend):"—"}</div>
+                    </div>
+                    <Tip text="Assumes each pack is drawn independently from the game's remaining pool." block>
+                      <div>
+                        <div style={{fontSize:".5rem",color:C.dim}}>P(≥1 Hit)</div>
+                        <div style={{fontSize:".72rem",fontWeight:600,color:C.green}}>{pAtLeastOne!=null?pct(pAtLeastOne,1):"—"}</div>
+                      </div>
+                    </Tip>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Trend sparklines (Detail view) ─────────────────────────────────────────────
+function seriesFor(points,key){
+  return (points||[]).map((p,i)=>({i,v:p?p[key]:null})).filter(p=>p.v!=null&&!isNaN(p.v));
+}
+function Sparkline({series,width=120,height=36,color=C.blue,refLine}){
+  if(!series||series.length<2){
+    return(
+      <svg width={width} height={height} style={{flexShrink:0}}>
+        <line x1={0} y1={height/2} x2={width} y2={height/2} stroke={C.b2} strokeWidth="1" strokeDasharray="2,3"/>
+      </svg>
+    );
+  }
+  const values=series.map(p=>p.v);
+  let min=Math.min(...values), max=Math.max(...values);
+  if(min===max){min-=1;max+=1;}
+  const range=max-min;
+  const stepX=width/(series.length-1);
+  const toY=v=>height-((v-min)/range)*height;
+  const d=series.map((p,i)=>`${i===0?"M":"L"}${(i*stepX).toFixed(2)},${toY(p.v).toFixed(2)}`).join(" ");
+  const showRef=refLine!=null&&refLine>=min&&refLine<=max;
+  const lastX=(series.length-1)*stepX, lastY=toY(values[values.length-1]);
+  return(
+    <svg width={width} height={height} style={{flexShrink:0,overflow:"visible"}}>
+      {showRef&&<line x1={0} y1={toY(refLine)} x2={width} y2={toY(refLine)} stroke={C.dim} strokeWidth="1" strokeDasharray="3,3"/>}
+      <path d={d} fill="none" stroke={color} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round"/>
+      <circle cx={lastX} cy={lastY} r="2.2" fill={color}/>
+    </svg>
+  );
+}
+function TrendTile({label,tip,points,dataKey,color,fmtVal,fmtDelta,refLine,invert}){
+  const series=seriesFor(points,dataKey);
+  const hasVal=series.length>=1;
+  const hasDelta=series.length>=2;
+  const last=hasVal?series[series.length-1].v:null;
+  const first=hasDelta?series[0].v:null;
+  const delta=hasDelta?last-first:null;
+  const improved=delta==null?null:(invert?delta<0:delta>0);
+  const dColor=delta==null?C.dim:delta===0?C.sub:improved?C.green:C.red;
+  return(
+    <Tip text={tip} block>
+      <div style={{background:C.s2,border:`1px solid ${C.b1}`,borderRadius:10,padding:"10px 12px"}}>
+        <div style={{fontSize:".58rem",color:C.dim,marginBottom:6}}>{label}</div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <Sparkline series={series} color={color} refLine={refLine}/>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:".85rem",fontWeight:700,color:C.text}}>{hasVal?fmtVal(last):"—"}</div>
+            <div style={{fontSize:".56rem",fontWeight:600,color:dColor}}>
+              {delta==null?"not enough history":`${fmtDelta(delta)} vs first`}
+            </div>
+          </div>
+        </div>
+      </div>
+    </Tip>
   );
 }
 
@@ -476,6 +665,18 @@ function Detail({g,onClose,scoreMax}){
   const cc=concColor(g.composite_conc!=null?g.composite_conc:g.concentration_ratio);
   const wrc=ratioColor(g.win_rate_ratio,1.0);
   const evgwc=ratioColor(g.ev_given_win_ratio,1.0);
+
+  const [hist,setHist]=useState({status:"loading",points:[]});
+  useEffect(()=>{
+    let cancelled=false;
+    setHist({status:"loading",points:[]});
+    const base=import.meta.env.VITE_API_BASE_URL||"";
+    fetch(`${base}/api/history/${g.game_number}`)
+      .then(r=>{ if(!r.ok) throw new Error("no history"); return r.json(); })
+      .then(data=>{ if(!cancelled) setHist({status:"ok",points:Array.isArray(data&&data.points)?data.points:[]}); })
+      .catch(()=>{ if(!cancelled) setHist({status:"error",points:[]}); });
+    return ()=>{cancelled=true};
+  },[g.game_number]);
 
   return(
     <div style={{position:"fixed",inset:0,background:C.bg,zIndex:100,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
@@ -522,11 +723,35 @@ function Detail({g,onClose,scoreMax}){
                 {" × "}JP: <strong style={{color:concColor(g.jp_conc_ratio)}}>{g.jp_mult?.toFixed(3)}×</strong>
                 {" × "}WR: <strong style={{color:wrc}}>{g.wr_mult?.toFixed(3)}×</strong>
                 {" × "}EV|Win: <strong style={{color:evgwc}}>{g.evgw_mult?.toFixed(3)}×</strong>
+                {g.mom_mult!=null&&<>{" × "}Mom: <strong style={{color:momentumColor(g.momentum_7d)}}>{g.mom_mult.toFixed(3)}×</strong></>}
                 {" = "}<strong style={{color:C.green}}>{g.adj_prof_score?.toFixed(4)}</strong>
                 {" ("}{(g.adj_prof_score/scoreMax*100).toFixed(1)}{"% of max)"}
               </div>
             </div>
           </>
+        )}
+
+        {/* Trends */}
+        <SectionHeader label="Trends" sub="Daily snapshot history for this game"/>
+        {hist.status==="loading"?(
+          <div style={{fontSize:".65rem",color:C.dim,marginBottom:20}}>Loading trend history…</div>
+        ):hist.status==="error"||!hist.points.length?(
+          <div style={{fontSize:".65rem",color:C.dim,marginBottom:20}}>No history yet.</div>
+        ):(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
+            <TrendTile label="Score Trend" points={hist.points} dataKey="adj_prof_score" color={C.gold}
+              fmtVal={val=>val.toFixed(4)} fmtDelta={val=>signed(val)}
+              tip="Composite profitability score (adj_prof_score) across recent daily snapshots. A rising line means the pack has become more attractive over time."/>
+            <TrendTile label="Concentration Trend" points={hist.points} dataKey="composite_conc" color={C.teal}
+              fmtVal={val=>x1(val)} fmtDelta={val=>(val>=0?"+":"")+val.toFixed(3)+"×"}
+              tip="Scarcity-weighted concentration ratio across recent snapshots. Above 1.0× means rare prizes are retaining better than at launch."/>
+            <TrendTile label="Enrichment Trend ($10K+)" points={hist.points} dataKey="hunter_enrich_10k" color={C.purple} refLine={1.0}
+              fmtVal={val=>x1(val)} fmtDelta={val=>(val>=0?"+":"")+val.toFixed(3)+"×"}
+              tip="How rich the pool is in $10,000+ prizes relative to launch day, across recent snapshots. Above 1.0× means the hunt has gotten better; the dashed line marks 1.0×."/>
+            <TrendTile label="$/Hit Trend ($10K+)" points={hist.points} dataKey="hunter_cost_per_hit_10k" color={C.blue} invert
+              fmtVal={val=>dollar(val)} fmtDelta={val=>(val>=0?"+":"-")+dollar(Math.abs(val))}
+              tip="Expected net spend to land one $10,000+ prize, across recent snapshots. Lower is better: a falling line means the hunt is getting cheaper."/>
+          </div>
         )}
 
         {/* Pool quality */}
@@ -883,7 +1108,7 @@ const GUIDE_SECTIONS = [
     color:C.gold,
     entries:[
       {term:"Composite Score",
-       def:"The final ranking metric (adj_prof_score). Starts with a base score of ROI × maturity confidence × floor protection, then applies four sigmoid multipliers for concentration, jackpot concentration, win rate drift, and EV|win drift. Each multiplier is anchored to 1.0× at neutral, so no signal produces no adjustment."},
+       def:"The final ranking metric (adj_prof_score). Starts with a base score of ROI × maturity confidence × floor protection, then applies five multipliers: concentration, jackpot concentration, win rate drift, EV|win drift, and 7-day momentum (capped at ±10%, calibrated from a 40-snapshot backtest where momentum predicted future concentration change). Each multiplier is neutral at 1.0×, so no signal produces no adjustment."},
       {term:"Verdict Tiers",
        def:"Percentile-based labels recalibrated each run. Elite = top 5%, Strong Buy = top 18%, Consider = top 45%, Marginal = positive EV below top 45%, Avoid = EV at or below guarantee. These shift as the game universe changes. A game can move from Strong Buy to Consider without any change to its own metrics if the overall field improved."},
       {term:"Score Ring",
@@ -969,11 +1194,11 @@ function Guide(){
 // ── Roadmap ───────────────────────────────────────────────────────────────────
 const ROADMAP = [
   {
-    phase:"Next: Momentum Scoring (needs 7+ snapshots)",
-    color:C.blue,
+    phase:"Shipped: Momentum Scoring (Jul 2026)",
+    color:C.green,
     items:[
-      {title:"Momentum as Score Multiplier",metric:"sigmoid_mult(momentum, k=TBD, max_boost=±0.10)",
-       desc:"Once 7+ daily snapshots smooth the velocity data, add momentum as a small multiplier to adj_prof_score. Games actively concentrating get a nudge; games diluting get dinged."},
+      {title:"Momentum as Score Multiplier",metric:"mom_mult = 1 + tanh(115 × momentum_7d) × 0.10",
+       desc:"7-day smoothed momentum now multiplies the composite score, capped at ±10%. Calibrated from a 40-snapshot backtest: momentum predicted the next 20 days of concentration change (rank correlation +0.44), while 1-day momentum measured as pure noise. Games actively concentrating get a nudge; games diluting get dinged."},
     ],
   },
   {
@@ -1320,6 +1545,11 @@ function AppInner(){
           {mode==="hunter"&&hunterTop&&(
             <div style={{padding:"0 16px",maxWidth:1432,margin:"0 auto"}}>
               <HunterBanner g={hunterTop} threshold={threshold}/>
+            </div>
+          )}
+          {mode==="hunter"&&(
+            <div style={{padding:"0 16px",maxWidth:1432,margin:"0 auto"}}>
+              <SessionPlanner games={filtered} threshold={threshold}/>
             </div>
           )}
           <div className="card-grid" style={{padding:"0 12px 24px",maxWidth:1432,margin:"0 auto"}}>

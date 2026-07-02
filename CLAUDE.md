@@ -127,9 +127,20 @@ adj_score = base_score
           × sigmoid_mult(jp_conc_ratio,   k=4,  max_boost=±0.25)
           × sigmoid_mult(win_rate_ratio,  k=8,  max_boost=±0.12)
           × sigmoid_mult(ev_given_win_ratio, k=10, max_boost=±0.10)
+          × mom_mult                                    [Phase 1b]
 
 sigmoid_mult(x, k, b) = 1 + tanh(k × (x - 1.0)) × b
+mom_mult = 1 + tanh(115 × momentum_7d) × 0.10   [anchored at 0, not 1]
 ```
+
+`momentum_7d` = (composite_conc now − composite_conc ~7 days ago) / days,
+using the snapshot closest to 7 days back (5–10 day window accepted; neutral
+1.0 when unavailable). Applied inside `compute_velocity_metrics()`, which
+therefore MUST run before `assign_verdicts()` — verdicts are percentile cuts
+on the adjusted score. k=115 calibrated 2026-07-01: p90 |momentum_7d|=0.0115
+earns ~87% of the boost. Backtest justification: mean momentum predicts
+next-20-day concentration change (spearman r=+0.44, p<0.001, n=62); daily
+momentum is white noise (SNR 0.49) while the 7-day mean is usable (SNR 1.55).
 
 All multipliers are anchored to 1.0 at neutral — no signal produces no
 adjustment. The sigmoid curve means genuinely exceptional concentration
@@ -206,6 +217,16 @@ the top of the file — there is no runtime API call.
 2. Dashboard fetches from API at `VITE_API_BASE_URL/api/latest` on load
 3. Push to `main` auto-deploys via GitHub Actions (API + UI workflows)
 
+### Hunter Mode (dashboard)
+
+Value/Hunter toggle in the filter bar. Hunter mode adds: threshold selector
+($1K+/$10K+/$100K+), gold recommendation banner (cheapest hit), Session
+Planner (budget input → packs, worst case, expected net spend, P(≥1 hit) —
+exact formulas only, no approximations), close-date risk tags (red, within
+60 days), and hunter card tiles. Detail view adds a Trends section
+(inline-SVG sparklines fed by `GET /api/history/{game_number}`) and a
+per-threshold Jackpot Hunter table.
+
 ### Filters and Sort Options
 
 The dashboard has three filter controls:
@@ -281,13 +302,12 @@ Uses only: `react`, `recharts` (not currently used but available),
 - All three computed in `compute_velocity_metrics()` which runs after
   `assign_verdicts()` in both `run()` and `run_recompute()`.
 
-### Phase 1b — Momentum scoring (UNBLOCKED — 40+ daily snapshots as of 2026-07-01)
-- **Momentum as a score multiplier** — once velocity data is smoothed over a
-  7-day window, add `sigmoid_mult(momentum, k=TBD, max_boost=±0.10)` to the
-  `adj_prof_score` formula. Games actively concentrating get a nudge; games
-  diluting get dinged. Keep the boost modest since velocity is noisier than
-  snapshot-level metrics. Do NOT implement until 7+ snapshots exist — 1-day
-  deltas are too noisy to be load-bearing in ranking.
+### Phase 1b — Momentum scoring ✅ SHIPPED (2026-07-01)
+- ~~**Momentum as a score multiplier**~~ — `mom_mult = 1 + tanh(115 ×
+  momentum_7d) × 0.10`, folded into `adj_prof_score` before verdict
+  assignment. Calibrated and justified by a 40-snapshot backtest (see Core
+  EV Model section). Uses 7-day smoothed momentum; 1-day momentum was
+  measured as white noise and is stored for display only.
 
 ### Phase 2 — Needs systematic detail page scraping
 - **Time-adjusted pack value** — urgency premium for games closing soon
@@ -345,3 +365,16 @@ Uses only: `react`, `recharts` (not currently used but available),
 5. **`adj_prof_score` is the ranking field** — not `prof_score`. All sorts,
    filters, and the score ring use `adj_prof_score`. The `prof_score` field
    is the pre-multiplier base used for decomposition display only.
+
+6. **Claim lag is real but uncorrected** (backtest 2026-07-01, 40 snapshots).
+   Aggregate realized big-tier (scarce+) claims ran 8% above the uniform-
+   claiming prediction (ratio 1.082, 95% CI 1.055–1.109), consistent with
+   big prizes being claimed days-to-weeks after being hit while sales
+   decline. However: (a) the lag itself was not estimable from 39 daily
+   flow observations (cross-correlation curve too noisy), and (b) the
+   cross-sectional artifact test came back clean — high-concentration games
+   showed NO deficit in realized hits (spearman r=0.003, n=52), so
+   concentration/enrichment are not obviously lag mirages. Decision: no lag
+   correction until ~90 snapshots exist; treat enrichment values within a
+   few percent of 1.0 as noise. Re-run the backtest
+   (scratchpad backtest.py pattern) before shipping any correction.

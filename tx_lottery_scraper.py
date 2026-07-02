@@ -194,10 +194,11 @@ def fetch_all_details(
     to_fetch = [n for n in game_numbers if force or n not in existing]
     log.info(f"Detail pages to fetch: {len(to_fetch)} (of {len(game_numbers)} games)")
 
+    missing_url = []
     for i, gnum in enumerate(to_fetch, 1):
         url = detail_urls.get(gnum)
         if not url:
-            log.warning(f"  [{i}/{len(to_fetch)}] #{gnum} - no detail URL found, skipping")
+            missing_url.append(gnum)
             results[gnum] = {"game_number": gnum}
             continue
 
@@ -220,6 +221,9 @@ def fetch_all_details(
         if i < len(to_fetch):
             time.sleep(CONFIG["request_delay_sec"])
 
+    if missing_url:
+        log.info(f"  no detail URL on listing page for {len(missing_url)} game(s): "
+                 f"{missing_url} (expected for some low-price/closing games)")
     return results
 
 
@@ -235,6 +239,16 @@ def sigmoid_mult(x, k: float, b: float) -> float:
     if x is None:
         return 1.0
     return 1.0 + math.tanh(k * (x - 1.0)) * b
+
+
+# Momentum multiplier (Phase 1b). Unlike the ratio multipliers (anchored at
+# 1.0), momentum is a daily delta anchored at 0. k calibrated 2026-07-01 from
+# 2,469 game-day observations of 7-day-smoothed momentum: p90 |m7|=0.0115
+# earns ~87% of the boost. Backtest: mean momentum predicts next-20-day
+# concentration change, spearman r=+0.44, p<0.001, n=62; daily momentum is
+# white noise (SNR 0.49) while the 7-day mean is usable (SNR 1.55).
+MOMENTUM_K     = 115
+MOMENTUM_BOOST = 0.10
 
 
 def classify_tiers(levels: list[dict], total_tickets: int, overall_retention: float) -> None:
@@ -717,7 +731,8 @@ def compute_velocity_metrics(db, recs: list[dict], all_levels_map: dict,
         for rec in recs:
             rec.update(claim_velocity_base=None, claim_velocity_top=None,
                        velocity_divergence=None, momentum=None,
-                       win_rate_velocity=None, days_since_prior=None)
+                       win_rate_velocity=None, days_since_prior=None,
+                       momentum_7d=None, mom_mult=None)
         return
 
     prior_date = prior_row[0]
@@ -730,6 +745,25 @@ def compute_velocity_metrics(db, recs: list[dict], all_levels_map: dict,
         "FROM games_analysis WHERE snapshot_date=?", (prior_date,))
     prior_ga = {r[0]: {"composite_conc": r[1], "win_rate_ratio": r[2]}
                 for r in prior_ga_rows}
+
+    # 7-day smoothed momentum: compare composite_conc to the snapshot closest
+    # to 7 days back (accept 5-10 days; None outside that window).
+    _, date_rows = db.fetch_rows(
+        f"SELECT DISTINCT {db._top_n(12)} snapshot_date FROM games_analysis "
+        f"WHERE snapshot_date < ? ORDER BY snapshot_date DESC {db._limit_n(12)}",
+        (snapshot_date,))
+    cur_d = date.fromisoformat(snapshot_date)
+    week_date, week_gap = None, None
+    for (d0,) in date_rows:
+        gap = (cur_d - date.fromisoformat(d0)).days
+        if 5 <= gap <= 10 and (week_gap is None or abs(gap - 7) < abs(week_gap - 7)):
+            week_date, week_gap = d0, gap
+    week_conc = {}
+    if week_date:
+        _, wk_rows = db.fetch_rows(
+            "SELECT game_number, composite_conc FROM games_analysis "
+            "WHERE snapshot_date=?", (week_date,))
+        week_conc = {r[0]: r[1] for r in wk_rows}
 
     _, prior_pl_rows = db.fetch_rows(
         "SELECT game_number, prize_amount, claimed, total_printed, is_meaningful "
@@ -778,6 +812,19 @@ def compute_velocity_metrics(db, recs: list[dict], all_levels_map: dict,
             rec["velocity_divergence"] = round(rec["claim_velocity_base"] - rec["claim_velocity_top"], 8)
         else:
             rec["velocity_divergence"] = None
+
+        # Phase 1b: 7-day momentum multiplier folded into adj_prof_score.
+        # Must run before assign_verdicts (percentile cuts use adjusted scores).
+        wc = week_conc.get(gnum)
+        if wc is not None and rec.get("composite_conc") is not None and week_gap:
+            m7 = (rec["composite_conc"] - wc) / week_gap
+            rec["momentum_7d"] = round(m7, 6)
+            rec["mom_mult"]    = round(1.0 + math.tanh(MOMENTUM_K * m7) * MOMENTUM_BOOST, 6)
+        else:
+            rec["momentum_7d"] = None
+            rec["mom_mult"]    = None
+        if rec["mom_mult"] is not None and rec.get("adj_prof_score") is not None:
+            rec["adj_prof_score"] = round(rec["adj_prof_score"] * rec["mom_mult"], 6)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -898,6 +945,8 @@ CREATE TABLE IF NOT EXISTS games_analysis (
     momentum                    REAL,
     win_rate_velocity           REAL,
     days_since_prior            INTEGER,
+    momentum_7d                 REAL,
+    mom_mult                    REAL,
     UNIQUE(game_number, snapshot_date)
 );
 CREATE TABLE IF NOT EXISTS csv_raw (
@@ -1036,6 +1085,8 @@ _SQLSRV_DDL = [
         momentum                    FLOAT,
         win_rate_velocity           FLOAT,
         days_since_prior            INT,
+        momentum_7d                 FLOAT,
+        mom_mult                    FLOAT,
         CONSTRAINT UQ_games_analysis UNIQUE (game_number, snapshot_date)
     )
     """,
@@ -1085,6 +1136,7 @@ _SQLITE_MIGRATIONS = {
         ("claim_velocity_base","REAL"), ("claim_velocity_top","REAL"),
         ("velocity_divergence","REAL"), ("momentum","REAL"),
         ("win_rate_velocity","REAL"), ("days_since_prior","INTEGER"),
+        ("momentum_7d","REAL"), ("mom_mult","REAL"),
     ],
     "prize_levels": [
         ("one_in","REAL"), ("tier","TEXT"), ("is_jackpot","INTEGER"),
@@ -1122,6 +1174,7 @@ _SQLSRV_MIGRATIONS = {
         ("claim_velocity_base","FLOAT"), ("claim_velocity_top","FLOAT"),
         ("velocity_divergence","FLOAT"), ("momentum","FLOAT"),
         ("win_rate_velocity","FLOAT"), ("days_since_prior","INT"),
+        ("momentum_7d","FLOAT"), ("mom_mult","FLOAT"),
     ],
     "prize_levels": [
         ("one_in","FLOAT"), ("tier","NVARCHAR(20)"), ("is_jackpot","INT"),
@@ -1545,8 +1598,8 @@ def run_recompute(db: Database):
             all_recs.append(rec)
             all_levels_map[gnum] = enriched_levels
 
-        assign_verdicts(all_recs)
         compute_velocity_metrics(db, all_recs, all_levels_map, snap_date)
+        assign_verdicts(all_recs)
         for rec in all_recs:
             db.upsert_prize_levels(rec["game_number"], snap_date, all_levels_map[rec["game_number"]])
             db.upsert_analysis(rec)
@@ -1689,11 +1742,11 @@ def run(args):
         all_recs.append(rec)
         all_levels_map[gnum] = enriched_levels
 
-    # ── 5. Assign percentile-based verdicts ───────────────────────────────────
-    assign_verdicts(all_recs)
-
-    # ── 5b. Compute velocity metrics (cross-snapshot) ────────────────────────
+    # ── 5. Velocity metrics + momentum multiplier (must precede verdicts) ────
     compute_velocity_metrics(db, all_recs, all_levels_map, snapshot_date)
+
+    # ── 5b. Assign percentile-based verdicts on momentum-adjusted scores ─────
+    assign_verdicts(all_recs)
 
     # ── 6. Write to database ──────────────────────────────────────────────────
     for rec in all_recs:

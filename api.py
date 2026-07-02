@@ -141,6 +141,56 @@ def get_snapshot(snapshot_date: str):
         conn.close()
 
 
+@app.get("/api/history/{game_number}")
+def get_history(game_number: int):
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "SELECT snapshot_date, game_name, adj_prof_score, composite_conc, "
+            "momentum, win_rate_ratio, maturity, ev_per_pack, velocity_divergence, "
+            "hunter_enrich_1k, hunter_enrich_10k, hunter_enrich_100k, "
+            "hunter_cost_per_hit_1k, hunter_cost_per_hit_10k, hunter_cost_per_hit_100k, "
+            "jp_remaining "
+            "FROM games_analysis WHERE game_number=? ORDER BY snapshot_date ASC",
+            (game_number,),
+        )
+        rows = _rows_as_dicts(cur)
+        if not rows:
+            raise HTTPException(
+                status_code=404, detail=f"No history for game {game_number}"
+            )
+
+        game_name = rows[-1]["game_name"]
+        points = [
+            {
+                "date":                     r["snapshot_date"],
+                "adj_prof_score":           r["adj_prof_score"],
+                "composite_conc":           r["composite_conc"],
+                "momentum":                 r["momentum"],
+                "win_rate_ratio":           r["win_rate_ratio"],
+                "maturity":                 r["maturity"],
+                "ev_per_pack":              r["ev_per_pack"],
+                "velocity_divergence":      r["velocity_divergence"],
+                "hunter_enrich_1k":         r["hunter_enrich_1k"],
+                "hunter_enrich_10k":        r["hunter_enrich_10k"],
+                "hunter_enrich_100k":       r["hunter_enrich_100k"],
+                "hunter_cost_per_hit_1k":   r["hunter_cost_per_hit_1k"],
+                "hunter_cost_per_hit_10k":  r["hunter_cost_per_hit_10k"],
+                "hunter_cost_per_hit_100k": r["hunter_cost_per_hit_100k"],
+                "jp_remaining":             r["jp_remaining"],
+            }
+            for r in rows
+        ]
+
+        return {
+            "game_number": game_number,
+            "game_name":   game_name,
+            "points":      points,
+        }
+    finally:
+        conn.close()
+
+
 @app.get("/api/snapshots")
 def list_snapshots():
     conn = get_db()
