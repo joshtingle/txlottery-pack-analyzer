@@ -383,6 +383,9 @@ def scrape_retailers(db: "Database", game_numbers: list[int],
     cache_days = CONFIG["places_cache_days"]
 
     # Rolling coverage: never-scraped games first, then stalest last_seen.
+    # Within the never-scraped set, games the dashboard actually surfaces
+    # (top of the value ranking, cheapest hunter cost) jump the queue so
+    # partial coverage lands where the user will look first.
     cap = CONFIG["retailer_games_per_run"]
     try:
         _, seen_rows = db.fetch_rows(
@@ -390,9 +393,24 @@ def scrape_retailers(db: "Database", game_numbers: list[int],
         last_seen_by_game = {r[0]: r[1] for r in seen_rows}
     except Exception:
         last_seen_by_game = {}
+    priority: set = set()
+    try:
+        _, pv = db.fetch_rows(
+            "SELECT game_number FROM games_analysis WHERE snapshot_date="
+            "(SELECT MAX(snapshot_date) FROM games_analysis) "
+            "AND adj_prof_score IS NOT NULL ORDER BY adj_prof_score DESC")
+        priority |= {r[0] for r in pv[:15]}
+        _, ph = db.fetch_rows(
+            "SELECT game_number FROM games_analysis WHERE snapshot_date="
+            "(SELECT MAX(snapshot_date) FROM games_analysis) "
+            "AND hunter_cost_per_hit_1k IS NOT NULL ORDER BY hunter_cost_per_hit_1k ASC")
+        priority |= {r[0] for r in ph[:15]}
+    except Exception:
+        pass
     game_numbers = sorted(
         game_numbers,
         key=lambda g: (last_seen_by_game.get(g) is not None,
+                       g not in priority,
                        last_seen_by_game.get(g) or ""),
     )[:cap]
 

@@ -958,7 +958,9 @@ function Detail({g,onClose,scoreMax}){
           <div style={{fontSize:".65rem",color:C.dim,marginBottom:20}}>Loading retailer locations…</div>
         ):retailers.status==="error"||!retailers.rows.length?(
           <div style={{fontSize:".65rem",color:C.dim,marginBottom:20}}>
-            No nearby retailer data yet. Retailer locations refresh with the daily scrape.
+            No nearby retailer data for this game yet. Coverage rolls through a batch of games
+            with each daily scrape (the lottery site rate-limits this lookup), so this game's
+            locations should appear within a few days.
           </div>
         ):(
           <div style={{marginBottom:20}}>
@@ -1426,7 +1428,46 @@ function AppInner(){
       .catch(err=>console.error("Failed to load data:",err));
   },[]);
 
+  // Detail view <-> browser history. Opening a detail pushes #game/N so the
+  // phone back button/gesture closes it instead of leaving the site; the hash
+  // also makes game views deep-linkable.
+  const gamesRef=useRef([]);
+  const openDetail=useCallback(g=>{
+    window.history.pushState({game:g.game_number},"",`#game/${g.game_number}`);
+    setSelected(g);
+  },[]);
+  const closeDetail=useCallback(()=>{
+    if(window.location.hash.startsWith("#game/")) window.history.back();
+    else setSelected(null);
+  },[]);
+  useEffect(()=>{
+    const onPop=()=>{
+      const m=/^#game\/(\d+)$/.exec(window.location.hash);
+      if(m){
+        const g=gamesRef.current.find(x=>x.game_number===Number(m[1]));
+        setSelected(g||null);
+      }else setSelected(null);
+    };
+    window.addEventListener("popstate",onPop);
+    return ()=>window.removeEventListener("popstate",onPop);
+  },[]);
+
   const games=DB?.games||[];
+  gamesRef.current=games;
+
+  // Deep link: arriving with #game/N in the URL opens that detail once data
+  // loads. Rewrite history so back returns to the grid instead of leaving.
+  useEffect(()=>{
+    if(!DB) return;
+    const m=/^#game\/(\d+)$/.exec(window.location.hash);
+    if(!m) return;
+    const g=(DB.games||[]).find(x=>x.game_number===Number(m[1]));
+    if(g){
+      window.history.replaceState(null,"",window.location.pathname+window.location.search);
+      window.history.pushState({game:g.game_number},"",`#game/${g.game_number}`);
+      setSelected(g);
+    }
+  },[DB]);
   const asOf=DB?.asOf||"";
   const prices=useMemo(()=>[...new Set(games.map(g=>g.ticket_price))].sort((a,b)=>a-b),[games]);
 
@@ -1670,8 +1711,8 @@ function AppInner(){
           )}
           <div className="card-grid" style={{padding:"0 12px 24px",maxWidth:1432,margin:"0 auto"}}>
             {filtered.map((g,i)=>mode==="hunter"
-              ?<HunterGameCard key={g.game_number} g={g} rank={i+1} onClick={setSelected} threshold={threshold}/>
-              :<GameCard key={g.game_number} g={g} rank={i+1} onClick={setSelected} scoreMax={DB.score_max}/>)}
+              ?<HunterGameCard key={g.game_number} g={g} rank={i+1} onClick={openDetail} threshold={threshold}/>
+              :<GameCard key={g.game_number} g={g} rank={i+1} onClick={openDetail} scoreMax={DB.score_max}/>)}
             {!filtered.length&&(
               <div style={{textAlign:"center",color:C.dim,padding:60,fontSize:".8rem",gridColumn:"1/-1"}}>No games match your filters.</div>
             )}
@@ -1679,7 +1720,7 @@ function AppInner(){
         </>
       )}
 
-      {selected&&<Detail g={selected} onClose={()=>setSelected(null)} scoreMax={DB.score_max}/>}
+      {selected&&<Detail g={selected} onClose={closeDetail} scoreMax={DB.score_max}/>}
     </div>
   );
 }
