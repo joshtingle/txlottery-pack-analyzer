@@ -12,6 +12,9 @@ USAGE:
   python tx_lottery_scraper.py --export-csv        # dump analysis to CSV after run
   python tx_lottery_scraper.py --db sqlite         # use local SQLite instead
   python tx_lottery_scraper.py --migrate-sqlite    # one-time copy SQLite → SQL Server
+  python tx_lottery_scraper.py --retailers         # force retailer-location scrape
+  python tx_lottery_scraper.py --skip-retailers    # suppress retailer-location scrape
+  python tx_lottery_scraper.py --retailers-only    # only run the retailer-location scrape
 
 SCHEDULE:  Task Scheduler daily 6:00 AM (local machine — WAF blocks cloud runners)
 """
@@ -77,6 +80,20 @@ CONFIG = {
 
     # Thresholds
     "maturity_min": 0.10,
+
+    # Retailer locator scrape (Phase 4 groundwork). ZIPs are user-editable —
+    # defaults to the user's home area (76008 Aledo) plus surrounding
+    # Parker/west-Tarrant County ZIPs.
+    "retailer_locator_url": "https://www.texaslottery.com/opencms/Games/Scratch_Offs/Retailer_Locator.jsp",
+    "retailer_zips": ["76008", "76087", "76086", "76108", "76116", "76126"],
+    "retailer_region_area_codes": {"817", "682", "214", "469", "972", "945", "940", "254"},
+    "places_cache_days": 30,
+    # The locator endpoint WAF-blocks sustained bursts (observed 2026-07-03:
+    # 403s began after ~36 POSTs at 1.5s spacing). Coverage therefore rolls:
+    # each run scrapes only the stalest N games, and the whole scrape aborts
+    # on the first 403 rather than retrying into a hardening block.
+    "retailer_games_per_run": 12,
+    "retailer_delay_sec": 4.0,
 }
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -225,6 +242,220 @@ def fetch_all_details(
         log.info(f"  no detail URL on listing page for {len(missing_url)} game(s): "
                  f"{missing_url} (expected for some low-price/closing games)")
     return results
+
+
+# ── Retailer locator scrape ───────────────────────────────────────────────────
+# POST-only endpoint (GET returns the bare form). Verified live 2026-07-01ish:
+# header row is <thead><th> Retailer Name|Street Address|City|Phone Number|
+# Smoking Allowed?|Self Check Type|Map, data rows are <tbody><td>. Data rows
+# have been observed with as few as 6 cells (Self Check column absent) — the
+# first four cells (name/address/city/phone) and the last cell (Map link) are
+# stable; anything in between is smoking (and self-check, if present).
+
+_RETAILER_SKIP_SUBSTRINGS = ("no retailers found", "search again", "smoking survey pending")
+
+
+def fetch_retailer_locator(session: requests.Session, game_number: int, zip_code: str) -> str:
+    url = CONFIG["retailer_locator_url"]
+    headers = dict(CONFIG["headers"])
+    headers["Referer"] = url
+    headers["Content-Type"] = "application/x-www-form-urlencoded"
+    data = {
+        "submitted":  "true",
+        "city":       "",
+        "zip":        zip_code,
+        "gameNumber": str(game_number),
+        "smoking":    "",
+        "selfCheck":  "",
+    }
+    resp = session.post(url, data=data, headers=headers, timeout=CONFIG["timeout_sec"])
+    if resp.status_code == 403:
+        raise WafBlocked(f"403 on locator POST (game {game_number}, zip {zip_code})")
+    resp.raise_for_status()
+    return resp.text
+
+
+class WafBlocked(Exception):
+    """Locator endpoint returned 403 — stop the whole retailer scrape."""
+
+
+def parse_retailer_html(html: str) -> list[dict]:
+    soup  = BeautifulSoup(html, "html.parser")
+    table = soup.find("table")
+    if not table:
+        return []
+    tbody = table.find("tbody") or table
+
+    out = []
+    for tr in tbody.find_all("tr"):
+        cells = [td.get_text(strip=True) for td in tr.find_all("td")]
+        if len(cells) < 4:
+            continue  # non-data row (colspan message row, etc.)
+
+        first_lower = cells[0].strip().lower()
+        if not first_lower or any(p in first_lower for p in _RETAILER_SKIP_SUBSTRINGS):
+            continue
+
+        name, address, city, phone = cells[0], cells[1], cells[2], cells[3]
+        # Everything between the fixed first four and the trailing Map cell
+        # is smoking (and self-check, if the column is present for this row).
+        middle     = cells[4:-1] if len(cells) >= 5 else []
+        smoking    = middle[0] if len(middle) >= 1 and middle[0] else None
+        self_check = middle[1] if len(middle) >= 2 and middle[1] else None
+
+        out.append({
+            "retailer_name":  name,
+            "street_address": address,
+            "city":           city,
+            "phone_listed":   phone or None,
+            "smoking":        smoking,
+            "self_check":     self_check,
+        })
+    return out
+
+
+def _classify_phone(phone: str | None) -> str:
+    """Heuristic data-quality flag for a scraped retailer phone number."""
+    if not phone or not phone.strip():
+        return "missing"
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) != 10:
+        return "invalid_format"
+    if digits[:3] not in CONFIG["retailer_region_area_codes"]:
+        return "out_of_region"
+    return "ok"
+
+
+def places_search_text(query: str, api_key: str, session: requests.Session) -> dict:
+    """Google Places Text Search (New) lookup for a single retailer. Returns
+    places_name/places_phone/places_status; status is NOT_FOUND (no match) or
+    ERROR (request failure) instead of raising, so one bad lookup doesn't kill
+    the run."""
+    url = "https://places.googleapis.com/v1/places:searchText"
+    headers = {
+        "Content-Type":     "application/json",
+        "X-Goog-Api-Key":   api_key,
+        "X-Goog-FieldMask": "places.displayName,places.nationalPhoneNumber,places.businessStatus",
+    }
+    try:
+        resp = session.post(url, json={"textQuery": query}, headers=headers,
+                             timeout=CONFIG["timeout_sec"])
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        log.warning(f"    Places lookup failed for '{query}': {e}")
+        return {"places_name": None, "places_phone": None, "places_status": "ERROR"}
+
+    places = data.get("places") or []
+    if not places:
+        return {"places_name": None, "places_phone": None, "places_status": "NOT_FOUND"}
+
+    p = places[0]
+    return {
+        "places_name":   (p.get("displayName") or {}).get("text"),
+        "places_phone":  p.get("nationalPhoneNumber"),
+        "places_status": p.get("businessStatus") or "OK",
+    }
+
+
+def scrape_retailers(db: "Database", game_numbers: list[int],
+                      session: requests.Session, snapshot_date: str) -> None:
+    """Scrape the TX Lottery retailer locator for each game x configured ZIP,
+    classify phone data quality, optionally enrich via Google Places, and
+    upsert into the `retailers` table. Each game is wrapped in try/except so
+    one failure doesn't kill the run. Logs one summary line per game."""
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    if not api_key:
+        log.info("Places enrichment skipped (no GOOGLE_MAPS_API_KEY)")
+
+    # Prime the session once (GET) so the WAF passes the subsequent POSTs.
+    try:
+        session.get(CONFIG["retailer_locator_url"], headers=CONFIG["headers"],
+                    timeout=CONFIG["timeout_sec"])
+        time.sleep(CONFIG["request_delay_sec"])
+    except Exception as e:
+        log.warning(f"Retailer locator priming GET failed: {e} - continuing anyway")
+
+    zips       = CONFIG["retailer_zips"]
+    now_iso    = datetime.now(timezone.utc).isoformat()
+    cache_days = CONFIG["places_cache_days"]
+
+    # Rolling coverage: never-scraped games first, then stalest last_seen.
+    cap = CONFIG["retailer_games_per_run"]
+    try:
+        _, seen_rows = db.fetch_rows(
+            "SELECT game_number, MAX(last_seen) FROM retailers GROUP BY game_number")
+        last_seen_by_game = {r[0]: r[1] for r in seen_rows}
+    except Exception:
+        last_seen_by_game = {}
+    game_numbers = sorted(
+        game_numbers,
+        key=lambda g: (last_seen_by_game.get(g) is not None,
+                       last_seen_by_game.get(g) or ""),
+    )[:cap]
+
+    log.info(f"Scraping retailer locations for {len(game_numbers)} game(s) x {len(zips)} zip(s) "
+             f"(rolling cap {cap}/run)...")
+
+    for gnum in game_numbers:
+        try:
+            seen_keys    = set()
+            found_count  = 0
+            for zip_code in zips:
+                html = fetch_retailer_locator(session, gnum, zip_code)
+                rows = parse_retailer_html(html)
+
+                for row in rows:
+                    key = (row["retailer_name"], row["street_address"])
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    found_count += 1
+
+                    rec = {
+                        "game_number":    gnum,
+                        "retailer_name":  row["retailer_name"],
+                        "street_address": row["street_address"],
+                        "city":           row["city"],
+                        "zip":            zip_code,
+                        "phone_listed":   row["phone_listed"],
+                        "smoking":        row["smoking"],
+                        "self_check":     row["self_check"],
+                        "phone_flag":     _classify_phone(row["phone_listed"]),
+                        "places_phone":   None,
+                        "places_status":  None,
+                        "places_name":    None,
+                        "first_seen":     snapshot_date,
+                        "last_seen":      snapshot_date,
+                    }
+
+                    if api_key:
+                        cache_key = f"{row['retailer_name'].lower()}|{row['street_address'].lower()}"
+                        cached = db.get_places_cache(cache_key, cache_days)
+                        if cached is None:
+                            query  = f"{row['retailer_name']} {row['street_address']} {row['city']} TX"
+                            cached = places_search_text(query, api_key, session)
+                            db.upsert_places_cache(cache_key, cached["places_name"],
+                                                    cached["places_phone"],
+                                                    cached["places_status"], now_iso)
+                            time.sleep(CONFIG["request_delay_sec"])
+                        rec["places_name"]   = cached.get("places_name")
+                        rec["places_phone"]  = cached.get("places_phone")
+                        rec["places_status"] = cached.get("places_status")
+
+                    db.upsert_retailer(rec)
+
+                time.sleep(CONFIG["retailer_delay_sec"] + _rng.uniform(0.0, 2.0))
+
+            log.info(f"  game #{gnum}: {found_count} retailer(s) found across {len(zips)} zip(s)")
+        except WafBlocked as e:
+            log.warning(f"  WAF block detected ({e}) - aborting retailer scrape for this run; "
+                        f"rolling coverage resumes next run")
+            return
+        except Exception as e:
+            log.error(f"  game #{gnum}: retailer scrape failed - {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -961,6 +1192,32 @@ CREATE TABLE IF NOT EXISTS csv_raw (
     prizes_claimed  INTEGER,
     UNIQUE(snapshot_date, game_number, prize_level)
 );
+CREATE TABLE IF NOT EXISTS retailers (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_number     INTEGER NOT NULL,
+    retailer_name   TEXT,
+    street_address  TEXT,
+    city            TEXT,
+    zip             TEXT,
+    phone_listed    TEXT,
+    smoking         TEXT,
+    self_check      TEXT,
+    phone_flag      TEXT,
+    places_phone    TEXT,
+    places_status   TEXT,
+    places_name     TEXT,
+    first_seen      TEXT,
+    last_seen       TEXT,
+    UNIQUE(game_number, retailer_name, street_address)
+);
+CREATE TABLE IF NOT EXISTS places_cache (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    cache_key       TEXT UNIQUE,
+    places_name     TEXT,
+    places_phone    TEXT,
+    places_status   TEXT,
+    fetched_at      TEXT
+);
 """
 
 # SQL Server DDL — runs as separate statements (no IF NOT EXISTS in CREATE TABLE)
@@ -1103,6 +1360,38 @@ _SQLSRV_DDL = [
         total_prizes    INT,
         prizes_claimed  INT,
         CONSTRAINT UQ_csv_raw UNIQUE (snapshot_date, game_number, prize_level)
+    )
+    """,
+    """
+    IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id=OBJECT_ID(N'retailers') AND type=N'U')
+    CREATE TABLE retailers (
+        id              INT IDENTITY(1,1) PRIMARY KEY,
+        game_number     INT           NOT NULL,
+        retailer_name   NVARCHAR(200),
+        street_address  NVARCHAR(300),
+        city            NVARCHAR(100),
+        zip             NVARCHAR(10),
+        phone_listed    NVARCHAR(30),
+        smoking         NVARCHAR(50),
+        self_check      NVARCHAR(50),
+        phone_flag      NVARCHAR(20),
+        places_phone    NVARCHAR(30),
+        places_status   NVARCHAR(30),
+        places_name     NVARCHAR(200),
+        first_seen      NVARCHAR(10),
+        last_seen       NVARCHAR(10),
+        CONSTRAINT UQ_retailers UNIQUE (game_number, retailer_name, street_address)
+    )
+    """,
+    """
+    IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id=OBJECT_ID(N'places_cache') AND type=N'U')
+    CREATE TABLE places_cache (
+        id              INT IDENTITY(1,1) PRIMARY KEY,
+        cache_key       NVARCHAR(500) UNIQUE,
+        places_name     NVARCHAR(200),
+        places_phone    NVARCHAR(30),
+        places_status   NVARCHAR(30),
+        fetched_at      NVARCHAR(60)
     )
     """,
 ]
@@ -1408,6 +1697,87 @@ class Database:
             """, [rec["game_number"], rec["snapshot_date"]] + set_vals + vals)
             self.conn.commit()
 
+    def upsert_retailer(self, rec: dict):
+        """Insert or update a retailer row. On match, refresh last_seen and
+        the phone/places fields but never overwrite first_seen."""
+        match_keys  = ["game_number", "retailer_name", "street_address"]
+        update_cols = ["city", "zip", "phone_listed", "smoking", "self_check",
+                       "phone_flag", "places_phone", "places_status", "places_name",
+                       "last_seen"]
+        insert_cols = match_keys + update_cols + ["first_seen"]
+
+        if self.mode == "sqlite":
+            cur = self.conn.execute(
+                f"UPDATE retailers SET {', '.join(f'{c}=?' for c in update_cols)} "
+                f"WHERE game_number=? AND retailer_name=? AND street_address=?",
+                [rec.get(c) for c in update_cols] + [rec[k] for k in match_keys],
+            )
+            if cur.rowcount == 0:
+                self.conn.execute(
+                    f"INSERT INTO retailers ({','.join(insert_cols)}) "
+                    f"VALUES ({','.join(['?']*len(insert_cols))})",
+                    [rec[k] for k in match_keys] + [rec.get(c) for c in update_cols]
+                    + [rec.get("first_seen")],
+                )
+            self.conn.commit()
+        else:
+            cur = self.conn.cursor()
+            set_clause = ", ".join(f"{c}=?" for c in update_cols)
+            cur.execute(f"""
+                MERGE retailers AS t
+                USING (SELECT ? AS game_number, ? AS retailer_name, ? AS street_address) AS s
+                    ON t.game_number=s.game_number AND t.retailer_name=s.retailer_name
+                       AND t.street_address=s.street_address
+                WHEN MATCHED THEN UPDATE SET {set_clause}
+                WHEN NOT MATCHED THEN INSERT ({','.join(insert_cols)})
+                    VALUES ({','.join(['?']*len(insert_cols))});
+            """, [rec[k] for k in match_keys]
+                 + [rec.get(c) for c in update_cols]
+                 + [rec[k] for k in match_keys] + [rec.get(c) for c in update_cols]
+                 + [rec.get("first_seen")])
+            self.conn.commit()
+
+    def get_places_cache(self, cache_key: str, max_age_days: int) -> dict | None:
+        _, rows = self.fetch_rows(
+            "SELECT places_name, places_phone, places_status, fetched_at "
+            "FROM places_cache WHERE cache_key=?", (cache_key,))
+        if not rows:
+            return None
+        places_name, places_phone, places_status, fetched_at = rows[0]
+        try:
+            age_days = (datetime.now(timezone.utc)
+                        - datetime.fromisoformat(fetched_at)).days
+        except (TypeError, ValueError):
+            return None  # unparsable timestamp - treat as stale, re-fetch
+        if age_days > max_age_days:
+            return None
+        return {"places_name": places_name, "places_phone": places_phone,
+                "places_status": places_status}
+
+    def upsert_places_cache(self, cache_key: str, places_name, places_phone,
+                             places_status, fetched_at: str):
+        if self.mode == "sqlite":
+            self.conn.execute(
+                "INSERT OR REPLACE INTO places_cache "
+                "(cache_key,places_name,places_phone,places_status,fetched_at) "
+                "VALUES (?,?,?,?,?)",
+                [cache_key, places_name, places_phone, places_status, fetched_at],
+            )
+            self.conn.commit()
+        else:
+            cur = self.conn.cursor()
+            cur.execute("""
+                MERGE places_cache AS t
+                USING (SELECT ? AS cache_key) AS s ON t.cache_key=s.cache_key
+                WHEN MATCHED THEN UPDATE SET
+                    places_name=?,places_phone=?,places_status=?,fetched_at=?
+                WHEN NOT MATCHED THEN INSERT
+                    (cache_key,places_name,places_phone,places_status,fetched_at)
+                    VALUES (?,?,?,?,?);
+            """, [cache_key, places_name, places_phone, places_status, fetched_at,
+                  cache_key, places_name, places_phone, places_status, fetched_at])
+            self.conn.commit()
+
     # ── Reads ──────────────────────────────────────────────────────────────────
 
     def load_static(self) -> dict[int, dict]:
@@ -1697,6 +2067,17 @@ def run(args):
         log.info("Done.")
         return
 
+    if getattr(args, "retailers_only", False):
+        csv_rows, snapshot_date = fetch_csv(session)
+        if not snapshot_date:
+            snapshot_date = date.today().isoformat()
+        game_records = build_game_records(csv_rows, snapshot_date)
+        game_numbers = sorted(game_records.keys())
+        scrape_retailers(db, game_numbers, session, snapshot_date)
+        db.close()
+        log.info("Done (retailers-only).")
+        return
+
     # ── 1. Fetch CSV ──────────────────────────────────────────────────────────
     csv_rows, snapshot_date = fetch_csv(session)
     if not snapshot_date:
@@ -1762,6 +2143,20 @@ def run(args):
         f"Analytics staged: {len(all_recs)} games."
     )
 
+    # ── 6b. Retailer location scrape (optional) ───────────────────────────────
+    # Precedence: --skip-retailers always wins over --retailers. Default (no
+    # flags) runs on full runs only, never on --daily-only, so the 6 AM
+    # scheduled task only gains this step on days it does a full run.
+    if getattr(args, "skip_retailers", False):
+        do_retailers = False
+    elif getattr(args, "retailers", False):
+        do_retailers = True
+    else:
+        do_retailers = not args.daily_only
+
+    if do_retailers:
+        scrape_retailers(db, game_numbers, session, snapshot_date)
+
     # ── 7. Output ─────────────────────────────────────────────────────────────
     print_top_games(db, snapshot_date)
 
@@ -1783,6 +2178,9 @@ if __name__ == "__main__":
     parser.add_argument("--recompute",      action="store_true", help="Recompute analytics for all snapshots")
     parser.add_argument("--export-csv",     action="store_true", help="Export analysis to CSV after run")
     parser.add_argument("--migrate-sqlite", action="store_true", help="One-time copy of local SQLite into SQL Server")
+    parser.add_argument("--retailers",      action="store_true", help="Force retailer-location scrape (default: runs on full runs only)")
+    parser.add_argument("--skip-retailers", action="store_true", help="Suppress retailer-location scrape even on a full run")
+    parser.add_argument("--retailers-only", action="store_true", help="Only fetch CSV (for game list) and run the retailer-location scrape, then exit")
     parser.add_argument("--db", choices=["sqlite","sqlserver"], default="sqlserver",
                         help="Database backend (default: sqlserver)")
     args = parser.parse_args()

@@ -320,8 +320,36 @@ Uses only: `react`, `recharts` (not currently used but available),
   meaningful or just marketing?
 
 ### Phase 4 — Needs external data
-- **Retailer density score** — high-volume retailers deplete packs faster
+- **Retailer density score** — high-volume retailers deplete packs faster.
+  Groundwork shipped 2026-07-03: per-game retailer locations now accumulate
+  in the `retailers` table (see Retailer Locations below).
 - **Second-chance drawing value** — currently ignored, adds EV for some games
+
+### Retailer Locations (shipped 2026-07-03)
+
+Per-game retailer scrape from the locator JSP (POST-only:
+`/opencms/Games/Scratch_Offs/Retailer_Locator.jsp`, fields submitted/city/
+zip/gameNumber/smoking/selfCheck). Config: `retailer_zips` (user's area,
+76008 Aledo + 5 surrounding, all within ~15 mi), `retailer_games_per_run`
+(rolling cap, 12), `retailer_delay_sec` (4.0 + jitter).
+
+**WAF constraint is severe on this endpoint**: sustained bursts get 403'd
+after roughly 36 POSTs (observed 2026-07-03) — much stricter than the CSV or
+detail pages, and the block persists 40+ minutes. Hence: rolling coverage
+(stalest games first, capped per run) and a circuit breaker (`WafBlocked`)
+that aborts the entire retailer step on the first 403. NEVER raise the cap
+or lower the delay without re-testing the block threshold. CSV/detail
+endpoints stay reachable during a locator block (verified).
+
+Phone validation is two-tier: heuristic `phone_flag`
+(ok/out_of_region/invalid_format/missing — the lottery DB often lists the
+licensee's personal cell, e.g. out-of-state area codes on local stores) and
+optional Google Places enrichment (activates when `GOOGLE_MAPS_API_KEY` env
+var is set; cached in `places_cache` for 30 days). UI badges: verified /
+corrected / likely owner's cell / no valid number / possibly closed.
+`GET /api/retailers/{game_number}` serves the latest-scrape rows, ZIP
+priority order. CLI: `--retailers`, `--skip-retailers`, `--retailers-only`.
+Full runs include the step by default; `--daily-only` never does.
 
 ### Dashboard improvements (no data dependency)
 - ~~JSON file drop for data refresh~~ — superseded by API-backed dashboard

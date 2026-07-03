@@ -100,6 +100,70 @@ function momentumColor(m){ return m==null?C.dim:m>0.005?C.green:m>-0.005?C.sub:m
 function momentumLabel(m){ return m==null?"—":m>0.01?"Concentrating fast":m>0.005?"Concentrating":m>-0.005?"Stable":m>-0.01?"Diluting":"Diluting fast"; }
 function velDivColor(v){ return v==null?C.dim:v>0.0005?C.green:v>-0.0005?C.sub:C.red; }
 
+// ── Retailer phone/badge logic (Where to Buy Nearby) ───────────────────────────
+// Grouping order follows the API's response order, which is already sorted by
+// the ZIP priority list (76008,76087,76086,76108,76116,76126, then others).
+function digits7(s){ return s?String(s).replace(/\D/g,"").slice(-7):""; }
+function telHref(s){ return "tel:"+String(s).replace(/[^\d+]/g,""); }
+function phoneBadge(r){
+  const hasPlaces=r.places_phone!=null&&r.places_phone!=="";
+  const hasListed=r.phone_listed!=null&&r.phone_listed!=="";
+  if(hasPlaces&&hasListed){
+    if(digits7(r.places_phone)===digits7(r.phone_listed))
+      return {label:"verified",color:C.green,bg:C.greenBg};
+    return {label:"corrected",color:C.teal,bg:C.tealBg,
+      tip:"The lottery-listed number for this store appeared wrong. This number comes from Google instead."};
+  }
+  if(!hasPlaces&&r.phone_flag==="out_of_region")
+    return {label:"likely owner's cell",color:C.amber,bg:C.amberBg,
+      tip:"This number's area code isn't local, so it's probably the licensee's personal cell phone from the retailer application, not the store counter."};
+  if(r.phone_flag==="invalid_format"||r.phone_flag==="missing")
+    return {label:"no valid number",color:C.red,bg:C.redBg};
+  return null;
+}
+function groupByZip(rows){
+  const order=[],map=new Map();
+  for(const r of rows||[]){
+    const z=r.zip||"—";
+    if(!map.has(z)){map.set(z,[]);order.push(z);}
+    map.get(z).push(r);
+  }
+  return order.map(z=>[z,map.get(z)]);
+}
+function RetailerRow({r}){
+  const bestPhone=r.places_phone||r.phone_listed;
+  const badge=phoneBadge(r);
+  const closedTag=r.places_status&&r.places_status!=="OPERATIONAL"&&r.places_status!=="NOT_FOUND";
+  return(
+    <div style={{borderBottom:`1px solid ${C.b1}`,padding:"10px 14px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:".75rem",fontWeight:600,color:C.text}}>{r.retailer_name}</div>
+          <div style={{fontSize:".6rem",color:C.dim,marginTop:2}}>
+            {r.street_address}{r.street_address&&r.city?", ":""}{r.city}
+          </div>
+          {(r.smoking==="Yes"||r.self_check)&&(
+            <div style={{display:"flex",gap:5,marginTop:5,flexWrap:"wrap"}}>
+              {r.smoking==="Yes"&&<Tag label="smoking allowed" color={C.sub} bg={C.s3}/>}
+              {r.self_check&&<Tag label="self-check" color={C.sub} bg={C.s3}/>}
+            </div>
+          )}
+        </div>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5,flexShrink:0}}>
+          {bestPhone
+            ?<a href={telHref(bestPhone)} style={{fontSize:".72rem",fontWeight:600,color:C.blue,textDecoration:"none",whiteSpace:"nowrap"}}>{bestPhone}</a>
+            :<span style={{fontSize:".72rem",color:C.dim}}>—</span>}
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",justifyContent:"flex-end"}}>
+            {badge&&<Tag label={badge.label} color={badge.color} bg={badge.bg} tip={badge.tip}/>}
+            {closedTag&&<Tag label="possibly closed" color={C.red} bg={C.redBg}
+              tip="Google's business status for this address is not operational. It may have closed or moved, confirm before visiting."/>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Bar({v=0,color,h=5}){
   return(
     <div style={{background:C.s3,borderRadius:3,height:h,overflow:"hidden"}}>
@@ -678,6 +742,18 @@ function Detail({g,onClose,scoreMax}){
     return ()=>{cancelled=true};
   },[g.game_number]);
 
+  const [retailers,setRetailers]=useState({status:"loading",rows:[]});
+  useEffect(()=>{
+    let cancelled=false;
+    setRetailers({status:"loading",rows:[]});
+    const base=import.meta.env.VITE_API_BASE_URL||"";
+    fetch(`${base}/api/retailers/${g.game_number}`)
+      .then(r=>{ if(!r.ok) throw new Error("no retailers"); return r.json(); })
+      .then(data=>{ if(!cancelled) setRetailers({status:"ok",rows:Array.isArray(data&&data.retailers)?data.retailers:[]}); })
+      .catch(()=>{ if(!cancelled) setRetailers({status:"error",rows:[]}); });
+    return ()=>{cancelled=true};
+  },[g.game_number]);
+
   return(
     <div style={{position:"fixed",inset:0,background:C.bg,zIndex:100,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
       <div style={{position:"sticky",top:0,background:C.s1,borderBottom:`1px solid ${C.b1}`,
@@ -874,6 +950,28 @@ function Detail({g,onClose,scoreMax}){
                 tip="Monte Carlo probability that a single pack's total return is at least what it cost."/>
             </div>
           </>
+        )}
+
+        {/* Where to Buy Nearby */}
+        <SectionHeader label="Where to Buy Nearby" sub="Retailers currently listed for this game, nearest ZIP first"/>
+        {retailers.status==="loading"?(
+          <div style={{fontSize:".65rem",color:C.dim,marginBottom:20}}>Loading retailer locations…</div>
+        ):retailers.status==="error"||!retailers.rows.length?(
+          <div style={{fontSize:".65rem",color:C.dim,marginBottom:20}}>
+            No nearby retailer data yet. Retailer locations refresh with the daily scrape.
+          </div>
+        ):(
+          <div style={{marginBottom:20}}>
+            {groupByZip(retailers.rows).map(([zip,rows])=>(
+              <div key={zip} style={{marginBottom:10}}>
+                <div style={{fontSize:".58rem",color:C.dim,fontWeight:600,marginBottom:4,
+                  textTransform:"uppercase",letterSpacing:".5px"}}>ZIP {zip}</div>
+                <div style={{background:C.s2,border:`1px solid ${C.b1}`,borderRadius:10,overflow:"hidden"}}>
+                  {rows.map((r,i)=><RetailerRow key={i} r={r}/>)}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
 
         {/* Scenarios */}
@@ -1149,6 +1247,24 @@ const GUIDE_SECTIONS = [
        def:"Monte Carlo probability that a single pack's total return, counting every prize tier, is at least what the pack cost. A general profitability check, independent of the hunt threshold."},
       {term:"The Honest Caveat",
        def:"Hunting big prizes is negative expected value in every single game here, full stop. Hunter mode does not find a profitable jackpot bet; it minimizes the expected cost of exposure to a big prize. Use it to hunt more cheaply, not to convince yourself the hunt pays off."},
+    ],
+  },
+  {
+    title:"Where to Buy Nearby (Detail View)",
+    color:C.blue,
+    entries:[
+      {term:"What This Shows",
+       def:"Retailers currently reporting this game, grouped by ZIP code with the closest ZIPs listed first. This is not a live inventory feed: carrying a game does not mean a store has packs on the shelf right this minute. Calling ahead is still the point, this section just makes the number worth calling."},
+      {term:"verified",
+       def:"Google's listed phone number for this location matches the number on file with the Texas Lottery. Trustworthy as-is."},
+      {term:"corrected",
+       def:"The lottery-listed number for this store appeared wrong, so we show the number from Google instead. Two independent sources disagreed and Google's is the one displayed."},
+      {term:"likely owner's cell",
+       def:"The number's area code isn't local to the store. This is usually the personal cell phone of the license holder, filled in on the original retailer application, rather than the store counter. It may still reach someone, but don't expect a clerk to answer."},
+      {term:"no valid number",
+       def:"The phone on file is missing or not in a usable format, and Google hasn't supplied a replacement. There's no reliable way to call ahead for this location."},
+      {term:"possibly closed",
+       def:"Google's business status for this address is not 'operational' or 'not found.' The location may have closed, moved, or temporarily shut down. Confirm before making a trip."},
     ],
   },
 ];

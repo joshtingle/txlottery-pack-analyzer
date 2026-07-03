@@ -191,6 +191,40 @@ def get_history(game_number: int):
         conn.close()
 
 
+_RETAILER_ZIP_PRIORITY = ["76008", "76087", "76086", "76108", "76116", "76126"]
+_RETAILER_ZIP_ORDER_SQL = "CASE zip " + " ".join(
+    f"WHEN '{z}' THEN {i}" for i, z in enumerate(_RETAILER_ZIP_PRIORITY)
+) + f" ELSE {len(_RETAILER_ZIP_PRIORITY)} END"
+
+
+@app.get("/api/retailers/{game_number}")
+def get_retailers(game_number: int):
+    conn = get_db()
+    try:
+        try:
+            cur = conn.execute(
+                "SELECT retailer_name, street_address, city, zip, phone_listed, phone_flag, "
+                "places_phone, places_status, places_name, smoking, self_check, last_seen "
+                "FROM retailers "
+                "WHERE game_number=? AND last_seen = "
+                "(SELECT MAX(last_seen) FROM retailers WHERE game_number=?) "
+                f"ORDER BY {_RETAILER_ZIP_ORDER_SQL}, retailer_name",
+                (game_number, game_number),
+            )
+            retailers = _rows_as_dicts(cur)
+        except pyodbc.Error as e:
+            # The retailers table may not exist yet (rolled out separately from
+            # this endpoint). Treat "missing object" as an empty result, not a 500.
+            msg = str(e)
+            if "Invalid object name" in msg or "42S02" in msg:
+                retailers = []
+            else:
+                raise
+        return {"game_number": game_number, "retailers": retailers}
+    finally:
+        conn.close()
+
+
 @app.get("/api/snapshots")
 def list_snapshots():
     conn = get_db()
