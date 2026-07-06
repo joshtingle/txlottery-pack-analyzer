@@ -31,10 +31,13 @@ Thumbs.db
 !.claude/skills/
 !.claude/hooks/
 !.claude/settings.json
-!.claude/money-paths.json
+!.claude/risk-paths.json
 
 # Active bar marker stamped by /bar, read by the bar gate hook
 .current-bar
+
+# Active tier marker stamped by /route, read by the risk gate hook
+.current-route
 
 # Adjudicator CONFIRM stamp from /verify-up, read by the commit gate
 .adjudication-pass

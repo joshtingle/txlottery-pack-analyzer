@@ -2,11 +2,12 @@
 """PreToolUse gate on Bash: intercepts git commit and enforces two
 independent markers.  Bar marker: a fresh green stamp from run_bar.py,
 dormant until the project creates .claude/bar.json.  Adjudication marker:
-commits staging files under the project's declared money paths
-(.claude/money-paths.json, e.g. order execution or risk code) require a
-fresh .adjudication-pass stamped by /verify-up on an adjudicator-tier
-CONFIRM; dormant without that config.  Both make "never lands without
-verification" enforcement rather than prose."""
+commits staging files under the project's adjudicated risk paths
+(.claude/risk-paths.json categories with adjudicate true, e.g. order
+execution or risk code; legacy .claude/money-paths.json honored as a
+fallback) require a fresh .adjudication-pass stamped by /verify-up on an
+adjudicator-tier CONFIRM; dormant without either config.  Both make
+"never lands without verification" enforcement rather than prose."""
 import json
 import os
 import re
@@ -17,18 +18,48 @@ import time
 MAX_AGE_SECONDS = 1800
 
 
-def money_path_check(root: str) -> int:
-    cfg = os.path.join(root, ".claude", "money-paths.json")
-    if not os.path.isfile(cfg):
-        return 0
+def clean_prefix(p: str) -> str:
+    """Project-relative declared prefix: forward slashes, a single leading
+    './' or '/' removed as a prefix (never character-stripped, so
+    dot-prefixed paths like '.claude/hooks/' survive), lowercased."""
+    p = p.replace("\\", "/")
+    if p.startswith("./"):
+        p = p[2:]
+    elif p.startswith("/"):
+        p = p[1:]
+    return p.lower()
+
+
+def adjudicated_prefixes(root: str):
+    """Path prefixes whose commits require adjudication: risk-paths.json
+    categories flagged adjudicate true, else the legacy money-paths.json
+    list (all of which is treated as adjudicated)."""
+    cfg = os.path.join(root, ".claude", "risk-paths.json")
+    if os.path.isfile(cfg):
+        try:
+            with open(cfg, "r", encoding="utf-8") as f:
+                cats = json.load(f).get("categories") or {}
+            prefixes = []
+            for spec in cats.values():
+                if spec.get("adjudicate"):
+                    prefixes.extend(
+                        clean_prefix(p) for p in (spec.get("paths") or [])
+                    )
+            return prefixes
+        except (OSError, ValueError, AttributeError):
+            return []
+    legacy = os.path.join(root, ".claude", "money-paths.json")
+    if not os.path.isfile(legacy):
+        return []
     try:
-        with open(cfg, "r", encoding="utf-8") as f:
-            prefixes = [
-                p.replace("\\", "/").lstrip("./")
-                for p in (json.load(f).get("paths") or [])
-            ]
+        with open(legacy, "r", encoding="utf-8") as f:
+            return [clean_prefix(p) for p in (json.load(f).get("paths") or [])]
     except (OSError, ValueError):
-        return 0
+        return []
+
+
+def adjudicated_path_check(root: str) -> int:
+    prefixes = adjudicated_prefixes(root)
     if not prefixes:
         return 0
     try:
@@ -38,7 +69,9 @@ def money_path_check(root: str) -> int:
         ).stdout
     except Exception:
         return 0
-    staged = [l.strip().replace("\\", "/") for l in out.splitlines() if l.strip()]
+    staged = [
+        l.strip().replace("\\", "/").lower() for l in out.splitlines() if l.strip()
+    ]
     hits = [s for s in staged if any(s.startswith(p) for p in prefixes)]
     if not hits:
         return 0
@@ -47,14 +80,17 @@ def money_path_check(root: str) -> int:
         os.path.isfile(marker)
         and (time.time() - os.path.getmtime(marker)) <= MAX_AGE_SECONDS
     )
-    content = ""
+    confirmed = False
     if fresh:
         try:
             with open(marker, "r", encoding="utf-8") as f:
-                content = f.read()
+                lines = f.read().splitlines()
+            first_line = lines[0].strip() if lines else ""
+            first_token = first_line.split()[0].upper() if first_line.split() else ""
+            confirmed = first_token == "CONFIRM"
         except OSError:
-            pass
-    if fresh and "CONFIRM" in content:
+            confirmed = False
+    if fresh and confirmed:
         return 0
     sys.stderr.write(
         "Commit blocked: staged changes touch adjudicated paths (%s). "
@@ -94,7 +130,7 @@ def main() -> int:
     if not re.search(r"\bgit\b[^|;&]*\bcommit\b", cmd):
         return 0
     root = str(d.get("cwd") or os.getcwd())
-    rc = money_path_check(root)
+    rc = adjudicated_path_check(root)
     if rc:
         return rc
     if not os.path.isfile(os.path.join(root, ".claude", "bar.json")):

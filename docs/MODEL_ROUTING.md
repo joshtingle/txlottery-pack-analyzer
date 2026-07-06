@@ -42,8 +42,11 @@ The orchestrator picks a STARTING tier from observable signals, not from a guess
 - Normal feature or fix with a clear target, a few files, tests exist -> **standard**.
 - Touches money, safety, security, schema migrations, auth, or a recorded "Core definition" / "Current headline number"; or the request is ambiguous about intent; or it spans many subsystems; or it is a design or architecture choice -> **judgment**.
 - Irreversible and high-stakes (a destructive migration, a trade or payment, a prod-affecting deploy, a number about to be shown to leadership) -> **judgment** to produce, **adjudicator** to verify before it lands.
+- A fan-in synthesis of three or more subagent results whose integrated read feeds a decision, a recorded definition or headline number, or anything on the defer-to-user list -> the synthesis itself routes to **judgment**: a fresh-context judgment agent receives the raw agent outputs and produces the integrated read, which the orchestrator relays rather than composes.  Trivial fan-ins (run-and-report done confirmations) stay inline.  This closes the soft spot where integration, itself judgment work, silently defaults to the cheap orchestrator seat.
 
 The "judgment" and "adjudicator" triggers are deliberately the same categories as the "never delegate" list in `CLAUDE.md`.  The orchestrator does not judge whether those are hard; it only detects that the task is in the category, which it can do reliably.
+
+Projects make the weakest detection case (a task that looks mechanical but touches a risky surface) deterministic by declaring path prefixes in `.claude/risk-paths.json`, grouped into categories with an adjudicate flag.  The risk gate hook blocks any edit under a declared path unless `/route` has stamped a fresh judgment-tier `.current-route` marker, catching the misroute at generation time; the commit gate additionally blocks commits staging adjudicate-flagged paths without a fresh adjudicator CONFIRM, catching it at landing.  Declaration beats detection wherever the risky surface is known in advance.  Declare directory prefixes with a trailing slash (`gate/`, not `gate`); a bare prefix also matches sibling names that merely share the spelling (`gateway/`).  This project declares no risk paths yet; the gate is dormant until one is declared.
 
 ## The unit-of-work loop
 

@@ -39,6 +39,17 @@ REPORT: <what the final message must contain; for mechanical work, data not pros
 
 **REPORT** for run-and-report supervision must demand verbatim error text on failure.  Summaries of errors lose the one line that mattered.
 
+**REPORT shape for fan-in work.**  When several agents' results will be integrated, demand the structured return shape so synthesis degrades from composition to concatenation:
+
+```
+VERDICT: <done / blocked / failed, one word first>
+EVIDENCE: <the commands run and their verbatim decisive output>
+CAVEATS: <every qualifier, assumption, or partial result; "none" is an explicit entry>
+NUMBERS: <each figure with its n and its source; no naked numbers>
+```
+
+The orchestrator concatenates these blocks; it does not rewrite them.  Verifier and adjudicator verdict blocks are always relayed to the human verbatim, quoted in full, never paraphrased (see `/verify-up` step 3).  When a fan-in of three or more results feeds a decision, a recorded number, or anything on the defer-to-user list, the synthesis itself routes to judgment per `/route` step 2.
+
 ## What to delegate, what never to delegate
 
 Spend the expensive model on judgment and the cheap models on mechanics.  Before starting any task, ask: does this need design sense, interpretation, or a decision?  If not, delegate it to a background agent on a cheaper model and keep the main session free.

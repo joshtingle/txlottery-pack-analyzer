@@ -17,12 +17,17 @@ If the task is a one-file, few-line, reversible edit you can complete faster tha
 2. Irreversible and high-stakes → **judgment** to produce, and note now that `/verify-up` must use the adjudicator before it lands.
 3. Normal feature, fix, or refactor with a clear target and existing tests → **standard**.
 4. Reversible, fully specified, no interpretation required (sweeps, bulk edits to spec, log triage, broad searches, run-and-report supervision) → **mechanical**.
-5. No rule matched cleanly → **standard**, and record in the TODO entry which signal was ambiguous.
+5. The unit is the fan-in synthesis of three or more agent results whose integrated read feeds a decision, a recorded Core definition or headline number, or anything on the defer-to-user list → **judgment**: spawn a fresh-context judgment agent with the raw agent outputs and relay its integrated read; the orchestrator does not compose the integration itself.  Trivial fan-ins (run-and-report done confirmations) stay inline.
+6. No rule matched cleanly → **standard**, and record in the TODO entry which signal was ambiguous.
 
-## Step 3: pre-register the bar
+## Step 3: stamp the route marker
+
+Write one line to `.current-route` at the project root (overwrite; gitignored): `<tier> | <task one-liner> | <date>`.  The risk gate hook reads this stamp; edits under a path declared in `.claude/risk-paths.json` are blocked unless a fresh stamp says judgment or adjudicator, so a misroute is caught before generation instead of at commit.  The marker expires after four hours; re-stamp when routing the next unit.
+
+## Step 4: pre-register the bar
 
 Run `/bar` for this task before spawning anything.  Generation does not start without a written bar.
 
-## Step 4: fill and spawn
+## Step 5: fill and spawn
 
 Fill every slot of `docs/DELEGATION_TEMPLATE.md`.  A slot you cannot fill means the task is under-specified: either specify it now or drop to inline.  Spawn the matching agent (`mechanical-executor`, `implementer`, or `judgment-designer`) with the model tier tag in the agent description, for example `Backfill event table [haiku]`.  Delegated agents are leaves; they never spawn their own subagents, and concurrent fan-out caps at about four.

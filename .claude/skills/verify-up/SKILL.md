@@ -17,7 +17,9 @@ Spawn `independent-verifier` (or `adjudicator` when step 1 requires it) with a m
 
 ## Step 3: act on the verdict
 
-**CONFIRM**: accept, record the outcome in the TODO entry, and proceed to landing the work.  When the verifier was the adjudicator (money-touching or irreversible work), also stamp `.adjudication-pass` at the project root with the verdict line and date; the commit gate requires this fresh stamp for any commit staging files under the project's adjudicated paths (`.claude/money-paths.json`), so an unadjudicated money commit is blocked rather than trusted.
+**CONFIRM**: accept, record the outcome in the TODO entry, and proceed to landing the work.  When the verifier was the adjudicator (money-touching or irreversible work), also stamp `.adjudication-pass` at the project root, first line beginning with the word CONFIRM followed by the unit and date (the commit gate reads only a first line starting with CONFIRM as a pass); the commit gate requires this fresh stamp for any commit staging files under the project's adjudicated paths (`.claude/risk-paths.json` categories with adjudicate true; legacy `.claude/money-paths.json` honored), so an unadjudicated risk commit is blocked rather than trusted.
 **REJECT**: do not negotiate with the verdict and do not land partial work.  Route the named failures back through `/escalate`.  The verifier never repairs; regeneration happens at the generator tier or one above, and the verifier runs again on the new output.
+
+In both cases the verdict block reaches the human verbatim: quote it in full, never paraphrase, summarize, or soften it.  The orchestrator may add context around the quoted block but never restates it, because a rewritten rejection or a dropped caveat is the highest-stakes synthesis failure the orchestrator seat can commit, and it is invisible to the human by construction.
 
 If the verifier reports "bar is not checkable as written", fix the bar via `/bar` step 3 (recorded revision), then re-verify.  That is a process failure worth a line in the smells checklist if it recurs.
