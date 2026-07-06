@@ -28,7 +28,7 @@ This single table binds roles to models.  Onboarding a new model is a one-line e
 | mechanical | haiku |
 | standard | sonnet |
 | judgment | opus |
-| adjudicator | opus |
+| adjudicator | fable (personal calibration; the shipped template default is opus) |
 
 When the map changes in either direction (a stronger model arrives, or the top tier becomes unavailable), adjudicator always points at the strongest available tier.  A SessionStart hook (`adjudicator_check.py`) injects this check into every session: it reads the pinned model from `.claude/agents/adjudicator.md`, and when a stronger tier is available the session asks the owner before anything repoints.  The model never repoints on its own.
 
