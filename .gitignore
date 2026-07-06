@@ -19,8 +19,22 @@ ui/dist/
 *.env
 
 # Claude Code local project data
-.claude/
+# .claude/ replaced by the scoped block below; a bare directory ignore cannot be pierced by negations
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code working files; machinery ships, per-project markers stay ignored
+.claude/*
+!.claude/agents/
+!.claude/skills/
+!.claude/hooks/
+!.claude/settings.json
+!.claude/money-paths.json
+
+# Active bar marker stamped by /bar, read by the bar gate hook
+.current-bar
+
+# Adjudicator CONFIRM stamp from /verify-up, read by the commit gate
+.adjudication-pass

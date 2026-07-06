@@ -406,3 +406,7 @@ Full runs include the step by default; `--daily-only` never does.
    correction until ~90 snapshots exist; treat enrichment values within a
    few percent of 1.0 as noise. Re-run the backtest
    (scratchpad backtest.py pattern) before shipping any correction.
+
+## The unit-of-work loop (synced from claude-core-template v0.11, 2026-07-06)
+
+Before any non-trivial unit of work, delegated or inline, invoke `/route`.  Generation does not start until `/bar` has written a checkable bar into the task's `TODO.md` entry (create the file if the project lacks one) and stamped `.current-bar` (the bar gate hook enforces this for new code files).  A bar stated in the request still gets recorded first; the record is what `/verify-up` and later audits check against.  A subjective acceptance criterion ("make sure it looks right") is rewritten into a runnable check before any code is written.  Failures resolve through `/escalate`: diagnose (spec defect, bar defect, or capability), climb one tier only on capability, cap at two climbs, then surface.  The trivial floor survives: a one-file, few-line, reversible edit skips the ceremony.  This is a lower-stakes project: default routing starts at mechanical or standard per the Local calibration in `MODEL_ROUTING.md`, judgment is reserved for genuine design choices, and the adjudicator is rarely warranted.  Role agents live in `.claude/agents/`, loop skills in `.claude/skills/`, worked playbooks in `docs/playbooks/`, the signal table in `docs/MODEL_ROUTING.md`.

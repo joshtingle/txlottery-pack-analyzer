@@ -1,0 +1,129 @@
+#!/usr/bin/env python
+"""PreToolUse gate on Bash: intercepts git commit and enforces two
+independent markers.  Bar marker: a fresh green stamp from run_bar.py,
+dormant until the project creates .claude/bar.json.  Adjudication marker:
+commits staging files under the project's declared money paths
+(.claude/money-paths.json, e.g. order execution or risk code) require a
+fresh .adjudication-pass stamped by /verify-up on an adjudicator-tier
+CONFIRM; dormant without that config.  Both make "never lands without
+verification" enforcement rather than prose."""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+MAX_AGE_SECONDS = 1800
+
+
+def money_path_check(root: str) -> int:
+    cfg = os.path.join(root, ".claude", "money-paths.json")
+    if not os.path.isfile(cfg):
+        return 0
+    try:
+        with open(cfg, "r", encoding="utf-8") as f:
+            prefixes = [
+                p.replace("\\", "/").lstrip("./")
+                for p in (json.load(f).get("paths") or [])
+            ]
+    except (OSError, ValueError):
+        return 0
+    if not prefixes:
+        return 0
+    try:
+        out = subprocess.run(
+            ["git", "-C", root, "diff", "--cached", "--name-only"],
+            capture_output=True, text=True, timeout=8,
+        ).stdout
+    except Exception:
+        return 0
+    staged = [l.strip().replace("\\", "/") for l in out.splitlines() if l.strip()]
+    hits = [s for s in staged if any(s.startswith(p) for p in prefixes)]
+    if not hits:
+        return 0
+    marker = os.path.join(root, ".adjudication-pass")
+    fresh = (
+        os.path.isfile(marker)
+        and (time.time() - os.path.getmtime(marker)) <= MAX_AGE_SECONDS
+    )
+    content = ""
+    if fresh:
+        try:
+            with open(marker, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            pass
+    if fresh and "CONFIRM" in content:
+        return 0
+    sys.stderr.write(
+        "Commit blocked: staged changes touch adjudicated paths (%s). "
+        "Money-touching or irreversible work lands only after an "
+        "adjudicator-tier CONFIRM via /verify-up, which stamps "
+        ".adjudication-pass at the project root. Run /verify-up with the "
+        "adjudicator against the pre-registered bar, then retry the commit."
+        % ", ".join(hits[:5])
+    )
+    return 2
+
+
+def read_stdin_text() -> str:
+    raw = sys.stdin.buffer.read()
+    for enc in ("utf-8-sig", "utf-8", "utf-16-le", "utf-16"):
+        try:
+            t = raw.decode(enc)
+            if "{" in t:
+                return t
+        except Exception:
+            continue
+    return raw.decode("utf-8", "replace")
+
+
+def main() -> int:
+    text = read_stdin_text()
+    try:
+        d = json.loads(text)
+    except Exception:
+        try:
+            d = json.loads(re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", text))
+        except Exception:
+            return 0
+    if d.get("tool_name") != "Bash":
+        return 0
+    cmd = str((d.get("tool_input") or {}).get("command") or "")
+    if not re.search(r"\bgit\b[^|;&]*\bcommit\b", cmd):
+        return 0
+    root = str(d.get("cwd") or os.getcwd())
+    rc = money_path_check(root)
+    if rc:
+        return rc
+    if not os.path.isfile(os.path.join(root, ".claude", "bar.json")):
+        return 0
+    marker = os.path.join(root, ".claude", "last-bar-pass")
+    hint = (
+        " Run the bar first: python .claude/hooks/run_bar.py "
+        "(it stamps the marker only on a green run)."
+    )
+    if not os.path.isfile(marker):
+        sys.stderr.write("Commit blocked: no green-bar marker exists." + hint)
+        return 2
+    age = time.time() - os.path.getmtime(marker)
+    if age > MAX_AGE_SECONDS:
+        sys.stderr.write(
+            "Commit blocked: green-bar marker is %d minutes old (limit %d)."
+            % (age // 60, MAX_AGE_SECONDS // 60) + hint
+        )
+        return 2
+    try:
+        with open(marker, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
+        content = ""
+    if "PASS" not in content:
+        sys.stderr.write("Commit blocked: bar marker does not record a pass." + hint)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
