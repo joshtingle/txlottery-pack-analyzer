@@ -30,7 +30,9 @@ This single table binds roles to models.  Onboarding a new model is a one-line e
 | judgment | opus |
 | adjudicator | opus |
 
-When the map changes in either direction (a stronger model arrives, or the top tier becomes unavailable), edit this table and nothing else: adjudicator always points at the strongest available tier.  After any map change, run the eval set in `docs/PROCESS_EVALS.md`; it is the regression suite that says exactly which behaviors degrade.
+When the map changes in either direction (a stronger model arrives, or the top tier becomes unavailable), adjudicator always points at the strongest available tier.  A SessionStart hook (`adjudicator_check.py`) injects this check into every session: it reads the pinned model from `.claude/agents/adjudicator.md`, and when a stronger tier is available the session asks the owner before anything repoints.  The model never repoints on its own.
+
+The repoint procedure, on an owner yes, one commit: (1) `.claude/agents/adjudicator.md` frontmatter `model:` line plus the tier tag in its description (the spawn tier gate blocks tag/model mismatches); (2) the map table above, plus any personal-calibration copy of this doc; (3) the `AGENT_TIERS` fallback in `.claude/hooks/routing_ledger.py` (ledger attribution only).  Then sync the changed files to the machinery-carrying projects and run the eval set in `docs/PROCESS_EVALS.md`; it is the regression suite that says exactly which behaviors degrade on the new tier.
 
 ## Routing signals to starting tier
 
